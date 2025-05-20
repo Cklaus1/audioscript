@@ -1,0 +1,28 @@
+# AudioScript Configuration
+
+# Input file pattern (glob)
+# input: "./audio/*.mp3"
+
+# Output directory
+output_dir: "./transcripts"
+
+# Transcription quality tier (draft or high_quality)
+tier: "draft"
+
+# Version string for the transcription
+version: "1.0"
+
+# Audio preprocessing options
+clean_audio: false
+
+# Post-processing options
+summarize: false
+
+# Processing options
+force: false
+
+# Preferred model (if supported by provider)
+# model: "whisper-1"
+
+# Retry options
+no_retry: false
