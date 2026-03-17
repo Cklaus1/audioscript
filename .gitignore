@@ -39,3 +39,4 @@ Thumbs.db
 # Project specific
 output/
 *.mp3
+.env

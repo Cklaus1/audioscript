@@ -1,178 +1,114 @@
-"""Main CLI entry point for AudioScript."""
+"""AudioScript CLI — Agent-friendly audio transcription tool.
 
-import glob
-from pathlib import Path
-from typing import List, Optional
+Architecture:
+  - Global options (--format, --quiet, --dry-run, --pipe, --fields, --timeout) set via callback
+  - Rich Console writes to stderr, structured JSON to stdout
+  - Subcommands: transcribe, diarize, detect-language, vad, schema, status, check
+  - Env vars: AUDIOSCRIPT_FORMAT, AUDIOSCRIPT_OUTPUT_DIR, AUDIOSCRIPT_TIER, AUDIOSCRIPT_MODEL
+"""
+
+import os
+from typing import Optional
 
 import typer
-from rich.console import Console
-from rich.progress import Progress, SpinnerColumn, TextColumn, TimeElapsedColumn
 
 from audioscript import __version__
-from audioscript.config.settings import TranscriptionTier, get_settings
-from audioscript.processors.audio_processor import AudioProcessor
-from audioscript.utils.file_utils import ProcessingManifest
+from audioscript.cli.output import CLIContext, ExitCode, auto_detect_format, emit_error
+from audioscript.cli.commands.transcribe import transcribe_app
+from audioscript.cli.commands.schema_cmd import schema_app
+from audioscript.cli.commands.detect_lang import detect_language_app
+from audioscript.cli.commands.vad_cmd import vad_app
+from audioscript.cli.commands.diarize_cmd import diarize_app
+from audioscript.cli.commands.status_cmd import status_app
+from audioscript.cli.commands.check_cmd import check_app
 
-# Create typer app
+from rich.console import Console
+
+# --- App setup ---
 app = typer.Typer(
     name="audioscript",
-    help="CLI tool for audio transcription",
+    help="Agent-friendly audio transcription CLI using OpenAI Whisper.",
     add_completion=False,
+    invoke_without_command=True,
+    no_args_is_help=True,
 )
 
-# Create rich console for pretty output
-console = Console()
+# Register subcommands
+app.add_typer(transcribe_app, name="transcribe", help="Transcribe audio files using Whisper.")
+app.add_typer(schema_app, name="schema", help="Introspect AudioScript capabilities.")
+app.add_typer(detect_language_app, name="detect-language", help="Detect audio language.")
+app.add_typer(vad_app, name="vad", help="Voice Activity Detection.")
+app.add_typer(diarize_app, name="diarize", help="Standalone speaker diarization.")
+app.add_typer(status_app, name="status", help="Query processing status from manifest.")
+app.add_typer(check_app, name="check", help="Check dependencies, auth, and GPU status.")
 
 
 def version_callback(value: bool) -> None:
-    """Print the version and exit."""
+    """Print version and exit."""
     if value:
-        console.print(f"AudioScript version: {__version__}")
+        print(f"AudioScript {__version__}")
         raise typer.Exit()
 
 
-@app.command()
-def main(
-    input: Optional[str] = typer.Option(
-        None,
-        "--input",
-        "-i",
-        help="Input audio file or glob pattern",
+@app.callback()
+def global_options(
+    ctx: typer.Context,
+    format: Optional[str] = typer.Option(
+        None, "--format",
+        help="Output format: json, table, quiet, yaml. Default: auto-detect (tty=table, pipe=json).",
     ),
-    output_dir: str = typer.Option(
-        "./output",
-        "--output-dir",
-        "-o",
-        help="Directory to save transcription outputs",
+    quiet: bool = typer.Option(
+        False, "--quiet", "-q",
+        help="Suppress UI output, emit minimal JSON to stdout. Alias for --format quiet.",
     ),
-    tier: TranscriptionTier = typer.Option(
-        TranscriptionTier.DRAFT,
-        "--tier",
-        "-t",
-        help="Transcription quality tier (draft or high_quality)",
+    dry_run: bool = typer.Option(
+        False, "--dry-run",
+        help="Validate inputs and show what would happen without processing.",
     ),
-    version: str = typer.Option(
-        "1.0",
-        "--version",
-        help="Version of the transcription",
+    pipe: bool = typer.Option(
+        False, "--pipe",
+        help="Streaming mode: read file paths from stdin, emit NDJSON results to stdout.",
     ),
-    clean_audio: bool = typer.Option(
-        False,
-        "--clean-audio",
-        help="Clean audio before transcription",
+    fields: Optional[str] = typer.Option(
+        None, "--fields",
+        help="Comma-separated dot-notation fields to include in output (e.g. 'results.file,results.status').",
     ),
-    summarize: bool = typer.Option(
-        False,
-        "--summarize",
-        help="Generate a summary of the transcription",
+    timeout: Optional[int] = typer.Option(
+        None, "--timeout",
+        help="Per-file processing timeout in seconds.",
     ),
-    force: bool = typer.Option(
-        False,
-        "--force",
-        "-f",
-        help="Force re-processing of already processed files",
-    ),
-    model: Optional[str] = typer.Option(
-        None,
-        "--model",
-        "-m",
-        help="Model to use for transcription (optional)",
-    ),
-    no_retry: bool = typer.Option(
-        False,
-        "--no-retry",
-        help="Do not retry failed transcriptions",
-    ),
-    show_version: bool = typer.Option(
-        False,
-        "--version",
-        "-v",
+    version: Optional[bool] = typer.Option(
+        None, "--version", "-v",
         callback=version_callback,
         is_eager=True,
-        help="Show the version and exit",
+        help="Show version and exit.",
     ),
 ) -> None:
-    """Process audio files and generate transcriptions."""
-    # Convert CLI args to dict for merging with file config
-    cli_args = {
-        "input": input,
-        "output_dir": output_dir,
-        "tier": tier,
-        "version": version,
-        "clean_audio": clean_audio,
-        "summarize": summarize,
-        "force": force,
-        "model": model,
-        "no_retry": no_retry,
-    }
+    """Global options applied to all subcommands."""
+    # Env var fallback for format
+    effective_format = format or os.environ.get("AUDIOSCRIPT_FORMAT", "auto")
+    resolved_format = auto_detect_format(effective_format, quiet)
 
-    # Get merged settings from CLI args and config file
-    settings = get_settings(cli_args)
+    # When outputting structured data, route Rich to stderr
+    if resolved_format.value in ("json", "quiet", "yaml"):
+        console = Console(stderr=True)
+    else:
+        console = Console()
 
-    # Validate input files exist
-    if not settings["input"]:
-        console.print("[bold red]Error:[/] No input files specified. Use --input option or config file.")
-        raise typer.Exit(code=1)
+    # Parse --fields
+    parsed_fields = None
+    if fields:
+        parsed_fields = [f.strip() for f in fields.split(",") if f.strip()]
 
-    # Find input files using glob pattern
-    input_pattern = settings["input"]
-    input_files = glob.glob(input_pattern, recursive=True)
-
-    if not input_files:
-        console.print(f"[bold yellow]Warning:[/] No files found matching pattern: {input_pattern}")
-        raise typer.Exit(code=0)
-
-    # Create output directory if it doesn't exist
-    output_path = Path(settings["output_dir"])
-    output_path.mkdir(parents=True, exist_ok=True)
-
-    # Show settings and file count
-    console.print(f"[bold green]AudioScript[/] v{__version__}")
-    console.print(f"Found [bold]{len(input_files)}[/] audio files to process")
-    console.print(f"Transcription tier: [bold]{settings['tier']}[/]")
-    console.print(f"Output directory: [bold]{output_path.absolute()}[/]")
-
-    # Set up manifest file
-    manifest_path = output_path / "manifest.json"
-    manifest = ProcessingManifest(manifest_path)
-
-    # Create processor
-    processor = AudioProcessor(settings, manifest)
-
-    # Process files with progress bar
-    with Progress(
-        SpinnerColumn(),
-        TextColumn("[progress.description]{task.description}"),
-        TimeElapsedColumn(),
+    ctx.ensure_object(dict)
+    ctx.obj = CLIContext(
+        format=resolved_format,
+        dry_run=dry_run,
+        pipe=pipe,
+        fields=parsed_fields,
+        timeout=timeout,
         console=console,
-    ) as progress:
-        task = progress.add_task(f"[cyan]Processing {len(input_files)} files...", total=len(input_files))
-
-        successful = 0
-        failed = 0
-
-        for audio_file in input_files:
-            file_path = Path(audio_file)
-            progress.update(task, description=f"[cyan]Processing {file_path.name}...")
-
-            if processor.process_file(file_path):
-                successful += 1
-            else:
-                failed += 1
-
-            # Update progress
-            progress.advance(task)
-
-    # Show summary
-    console.print(f"\n[bold green]Processing complete![/]")
-    console.print(f"Successful: [bold green]{successful}[/]")
-
-    if failed > 0:
-        console.print(f"Failed: [bold red]{failed}[/]")
-
-    # Show where to find results
-    console.print(f"\nResults saved to: [bold]{output_path.absolute()}[/]")
-    console.print(f"Manifest file: [bold]{manifest_path.absolute()}[/]")
+    )
 
 
 if __name__ == "__main__":

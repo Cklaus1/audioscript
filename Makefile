@@ -10,7 +10,7 @@ test:
 	pytest
 
 run:
-	python try_audioscript.py
+	audioscript transcribe --input "samples/*.mp3" --output-dir ./output --format table
 
 demo: install run
 

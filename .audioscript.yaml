@@ -1,28 +1,29 @@
-# AudioScript Configuration
-
-# Input file pattern (glob)
-# input: "./audio/*.mp3"
-
-# Output directory
+# AudioScript default configuration
 output_dir: "./transcripts"
-
-# Transcription quality tier (draft or high_quality)
-tier: "draft"
-
-# Version string for the transcription
+tier: "draft"                    # draft (base), balanced (turbo), or high_quality (large-v3)
 version: "1.0"
-
-# Audio preprocessing options
 clean_audio: false
-
-# Post-processing options
 summarize: false
-
-# Processing options
 force: false
-
-# Preferred model (if supported by provider)
-# model: "whisper-1"
-
-# Retry options
 no_retry: false
+# model: "base"                 # Override tier with a specific model (e.g. base.en, turbo, large-v3)
+# language: "en"                # Language code, or omit for auto-detect
+
+# Whisper transcription options
+# temperature: "0.0,0.2,0.4,0.6,0.8,1.0"  # Fallback temperatures for decoding
+# word_timestamps: false        # Extract word-level timestamps
+# hallucination_silence_threshold: null  # Skip hallucinated text in silent sections (seconds)
+# beam_size: null               # Beam search width (default: 5 in whisper)
+# best_of: null                 # Number of candidates for sampling
+# clip_timestamps: null         # Process specific time ranges (e.g. "30,60,90")
+# carry_initial_prompt: false   # Carry prompt across all decode windows
+
+# Output options
+# output_format: "json"         # json, txt, vtt, srt, tsv, or all
+# highlight_words: false         # Underline words in VTT/SRT (requires word_timestamps)
+# max_line_width: null           # Max characters per subtitle line
+# max_line_count: null           # Max lines per subtitle entry
+# max_words_per_line: null       # Max words per subtitle line
+
+# Model options
+# download_root: null            # Custom directory for model cache
