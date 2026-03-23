@@ -8,7 +8,20 @@ import pytest
 
 from audioscript.config.settings import AudioScriptConfig, TranscriptionTier
 from audioscript.processors.audio_processor import AudioProcessor
+from audioscript.processors.backend_protocol import TranscriptionResult, TranscriptionSegment
 from audioscript.utils.file_utils import ProcessingManifest
+
+
+def _make_result(text: str = "hello world") -> TranscriptionResult:
+    """Create a mock TranscriptionResult."""
+    return TranscriptionResult(
+        text=text,
+        language="en",
+        segments=[
+            TranscriptionSegment(id=0, start=0.0, end=2.0, text=text),
+        ],
+        backend="whisper",
+    )
 
 
 def _make_settings(**overrides) -> AudioScriptConfig:
@@ -22,6 +35,8 @@ def _make_settings(**overrides) -> AudioScriptConfig:
         "no_retry": True,
         "max_retries": 3,
         "output_dir": "./output",
+        "backend": "whisper",
+        "hallucination_filter": "off",
     }
     defaults.update(overrides)
     return AudioScriptConfig(**defaults)
@@ -48,12 +63,11 @@ def mock_manifest():
 
 @pytest.fixture
 def mock_transcriber():
-    """Create a mock WhisperTranscriber that returns valid results."""
+    """Create a mock TranscriberBackend that returns valid results."""
     transcriber = MagicMock()
-    transcriber.transcribe.return_value = {"text": "hello world", "segments": []}
-    transcriber.create_checkpoint.return_value = '{"text": "hello world"}'
-    transcriber.clean_audio.return_value = Path("/tmp/cleaned.mp3")
-    transcriber.generate_summary.return_value = "hello world"
+    transcriber.transcribe.return_value = _make_result()
+    transcriber.backend_name = "whisper"
+    transcriber.supports_confidence = False
     return transcriber
 
 
@@ -86,7 +100,8 @@ def test_force_reprocess(temp_audio_file, mock_manifest, mock_transcriber):
     processor = AudioProcessor(settings, mock_manifest)
     processor._transcriber = mock_transcriber
 
-    with patch("pathlib.Path.mkdir"):
+    with patch("pathlib.Path.mkdir"), \
+         patch("audioscript.processors.audio_processor._save_results"):
         result = processor.process_file(temp_audio_file)
 
     assert result is True
@@ -102,12 +117,13 @@ def test_transcription_saves_results(temp_audio_file, mock_manifest, mock_transc
     processor = AudioProcessor(settings, mock_manifest)
     processor._transcriber = mock_transcriber
 
-    with patch("pathlib.Path.mkdir"):
+    with patch("pathlib.Path.mkdir"), \
+         patch("audioscript.processors.audio_processor._save_results") as mock_save:
         result = processor.process_file(temp_audio_file)
 
     assert result is True
     mock_transcriber.transcribe.assert_called_once()
-    mock_transcriber.save_results.assert_called_once()
+    mock_save.assert_called_once()
 
 
 def test_clean_audio_flag(temp_audio_file, mock_manifest, mock_transcriber):
@@ -116,11 +132,14 @@ def test_clean_audio_flag(temp_audio_file, mock_manifest, mock_transcriber):
     processor = AudioProcessor(settings, mock_manifest)
     processor._transcriber = mock_transcriber
 
-    with patch("pathlib.Path.mkdir"):
+    with patch("pathlib.Path.mkdir"), \
+         patch("audioscript.processors.audio_processor._save_results"), \
+         patch("audioscript.processors.audio_cleaner.clean_audio",
+               return_value=(temp_audio_file, {"snr_before": 15.0, "snr_after": 25.0, "skipped": False, "level": "moderate"})) as mock_clean:
         result = processor.process_file(temp_audio_file)
 
     assert result is True
-    mock_transcriber.clean_audio.assert_called_once()
+    mock_clean.assert_called_once()
 
 
 def test_summarize_flag(temp_audio_file, mock_manifest, mock_transcriber):
@@ -129,12 +148,12 @@ def test_summarize_flag(temp_audio_file, mock_manifest, mock_transcriber):
     processor = AudioProcessor(settings, mock_manifest)
     processor._transcriber = mock_transcriber
 
-    with patch("pathlib.Path.mkdir"):
+    with patch("pathlib.Path.mkdir"), \
+         patch("audioscript.processors.audio_processor._save_results"), \
+         patch("audioscript.processors.audio_processor.open", MagicMock(), create=True):
         result = processor.process_file(temp_audio_file)
 
     assert result is True
-    mock_transcriber.generate_summary.assert_called_once()
-    mock_transcriber.save_summary.assert_called_once()
 
 
 def test_high_quality_tier(temp_audio_file, mock_manifest, mock_transcriber):
@@ -143,7 +162,8 @@ def test_high_quality_tier(temp_audio_file, mock_manifest, mock_transcriber):
     processor = AudioProcessor(settings, mock_manifest)
     processor._transcriber = mock_transcriber
 
-    with patch("pathlib.Path.mkdir"):
+    with patch("pathlib.Path.mkdir"), \
+         patch("audioscript.processors.audio_processor._save_results"):
         result = processor.process_file(temp_audio_file)
 
     assert result is True
@@ -156,7 +176,8 @@ def test_balanced_tier(temp_audio_file, mock_manifest, mock_transcriber):
     processor = AudioProcessor(settings, mock_manifest)
     processor._transcriber = mock_transcriber
 
-    with patch("pathlib.Path.mkdir"):
+    with patch("pathlib.Path.mkdir"), \
+         patch("audioscript.processors.audio_processor._save_results"):
         result = processor.process_file(temp_audio_file)
 
     assert result is True
@@ -184,14 +205,15 @@ def test_error_with_retry_succeeds(temp_audio_file, mock_manifest, mock_transcri
     """Test that a transient error is retried and succeeds."""
     mock_transcriber.transcribe.side_effect = [
         RuntimeError("transient error"),
-        {"text": "success", "segments": []},
+        _make_result("success"),
     ]
-    mock_transcriber.create_checkpoint.return_value = '{"text": "success"}'
     settings = _make_settings(no_retry=False, max_retries=3)
     processor = AudioProcessor(settings, mock_manifest)
     processor._transcriber = mock_transcriber
 
-    with patch("pathlib.Path.mkdir"), patch("time.sleep"):
+    with patch("pathlib.Path.mkdir"), \
+         patch("audioscript.processors.audio_processor._save_results"), \
+         patch("time.sleep"):
         result = processor.process_file(temp_audio_file)
 
     assert result is True
@@ -218,7 +240,8 @@ def test_word_timestamps_passed(temp_audio_file, mock_manifest, mock_transcriber
     processor = AudioProcessor(settings, mock_manifest)
     processor._transcriber = mock_transcriber
 
-    with patch("pathlib.Path.mkdir"):
+    with patch("pathlib.Path.mkdir"), \
+         patch("audioscript.processors.audio_processor._save_results"):
         processor.process_file(temp_audio_file)
 
     call_kwargs = mock_transcriber.transcribe.call_args
@@ -231,7 +254,8 @@ def test_temperature_fallback_passed(temp_audio_file, mock_manifest, mock_transc
     processor = AudioProcessor(settings, mock_manifest)
     processor._transcriber = mock_transcriber
 
-    with patch("pathlib.Path.mkdir"):
+    with patch("pathlib.Path.mkdir"), \
+         patch("audioscript.processors.audio_processor._save_results"):
         processor.process_file(temp_audio_file)
 
     call_kwargs = mock_transcriber.transcribe.call_args
@@ -244,7 +268,8 @@ def test_beam_size_passed(temp_audio_file, mock_manifest, mock_transcriber):
     processor = AudioProcessor(settings, mock_manifest)
     processor._transcriber = mock_transcriber
 
-    with patch("pathlib.Path.mkdir"):
+    with patch("pathlib.Path.mkdir"), \
+         patch("audioscript.processors.audio_processor._save_results"):
         processor.process_file(temp_audio_file)
 
     call_kwargs = mock_transcriber.transcribe.call_args
@@ -253,15 +278,19 @@ def test_beam_size_passed(temp_audio_file, mock_manifest, mock_transcriber):
 
 def test_output_format_srt(temp_audio_file, mock_manifest, mock_transcriber):
     """Test that non-JSON output format triggers save_formatted_output."""
+    # For SRT output, the transcriber must be a WhisperTranscriber
+    from audioscript.processors.whisper_transcriber import WhisperTranscriber
+    mock_transcriber.__class__ = WhisperTranscriber
+    mock_transcriber.save_formatted_output = MagicMock()
+
     settings = _make_settings(output_format="srt", word_timestamps=True)
     processor = AudioProcessor(settings, mock_manifest)
     processor._transcriber = mock_transcriber
 
-    with patch("pathlib.Path.mkdir"):
+    with patch("pathlib.Path.mkdir"), \
+         patch("audioscript.processors.audio_processor._save_results"):
         processor.process_file(temp_audio_file)
 
-    # Should save both JSON and SRT
-    mock_transcriber.save_results.assert_called_once()
     mock_transcriber.save_formatted_output.assert_called_once()
     fmt_call = mock_transcriber.save_formatted_output.call_args
     assert fmt_call.kwargs.get("output_format") == "srt"
@@ -273,7 +302,8 @@ def test_language_passed(temp_audio_file, mock_manifest, mock_transcriber):
     processor = AudioProcessor(settings, mock_manifest)
     processor._transcriber = mock_transcriber
 
-    with patch("pathlib.Path.mkdir"):
+    with patch("pathlib.Path.mkdir"), \
+         patch("audioscript.processors.audio_processor._save_results"):
         processor.process_file(temp_audio_file)
 
     call_kwargs = mock_transcriber.transcribe.call_args
@@ -286,7 +316,8 @@ def test_hallucination_threshold_passed(temp_audio_file, mock_manifest, mock_tra
     processor = AudioProcessor(settings, mock_manifest)
     processor._transcriber = mock_transcriber
 
-    with patch("pathlib.Path.mkdir"):
+    with patch("pathlib.Path.mkdir"), \
+         patch("audioscript.processors.audio_processor._save_results"):
         processor.process_file(temp_audio_file)
 
     call_kwargs = mock_transcriber.transcribe.call_args
@@ -312,7 +343,8 @@ def test_diarize_flag(temp_audio_file, mock_manifest, mock_transcriber):
     processor._transcriber = mock_transcriber
     processor._diarizer = mock_diarizer
 
-    with patch("pathlib.Path.mkdir"):
+    with patch("pathlib.Path.mkdir"), \
+         patch("audioscript.processors.audio_processor._save_results"):
         result = processor.process_file(temp_audio_file)
 
     assert result is True

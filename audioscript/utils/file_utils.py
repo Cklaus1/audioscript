@@ -1,5 +1,7 @@
 """File utility functions for AudioScript."""
 
+from __future__ import annotations
+
 import hashlib
 import json
 import logging
@@ -7,7 +9,7 @@ import os
 import tempfile
 import time
 from pathlib import Path
-from typing import Any, Dict, Optional
+from typing import Any
 
 logger = logging.getLogger(__name__)
 
@@ -61,20 +63,20 @@ class ProcessingManifest:
         self.manifest_path = manifest_path
         self.data = self._load_manifest()
 
-    def _load_manifest(self) -> Dict[str, Any]:
+    def _load_manifest(self) -> dict[str, Any]:
         """Load the manifest file or create a new one if it doesn't exist."""
         if not self.manifest_path.exists():
-            return {"version": "1.0", "files": {}}
+            return {"version": "1.1", "files": {}}
 
         try:
             with open(self.manifest_path, "r") as f:
                 return json.load(f)
         except json.JSONDecodeError as e:
             logger.warning("Corrupt manifest file %s: %s", self.manifest_path, e)
-            return {"version": "1.0", "files": {}}
+            return {"version": "1.1", "files": {}}
         except OSError as e:
             logger.warning("Failed to read manifest %s: %s", self.manifest_path, e)
-            return {"version": "1.0", "files": {}}
+            return {"version": "1.1", "files": {}}
 
     def save(self) -> None:
         """Save the manifest atomically (write to temp, then rename)."""
@@ -116,8 +118,13 @@ class ProcessingManifest:
         status: str,
         tier: str,
         version: str,
-        checkpoint: Optional[str] = None,
-        error: Optional[str] = None,
+        checkpoint: str | None = None,
+        error: str | None = None,
+        *,
+        backend: str | None = None,
+        confidence: float | None = None,
+        hallucination_flags: int | None = None,
+        error_category: str | None = None,
     ) -> None:
         """Update the status of a file in the manifest."""
         if file_hash not in self.data["files"]:
@@ -136,15 +143,27 @@ class ProcessingManifest:
         if error is not None:
             self.data["files"][file_hash]["error"] = error
 
+        if backend is not None:
+            self.data["files"][file_hash]["backend"] = backend
+
+        if confidence is not None:
+            self.data["files"][file_hash]["confidence"] = confidence
+
+        if hallucination_flags is not None:
+            self.data["files"][file_hash]["hallucination_flags"] = hallucination_flags
+
+        if error_category is not None:
+            self.data["files"][file_hash]["error_category"] = error_category
+
         self.save()
 
-    def get_checkpoint(self, file_hash: str) -> Optional[str]:
+    def get_checkpoint(self, file_hash: str) -> str | None:
         """Get the checkpoint information for a file."""
         if file_hash not in self.data["files"]:
             return None
         return self.data["files"][file_hash].get("checkpoint")
 
-    def get_status(self, file_hash: str) -> Optional[str]:
+    def get_status(self, file_hash: str) -> str | None:
         """Get the processing status of a file."""
         if file_hash not in self.data["files"]:
             return None

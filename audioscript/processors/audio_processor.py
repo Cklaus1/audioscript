@@ -1,19 +1,48 @@
 """Audio processing and transcription functionality."""
 
+from __future__ import annotations
+
 import json
 import logging
 import time
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any
 
 from rich.console import Console
 
 from audioscript.config.settings import AudioScriptConfig
-from audioscript.processors.whisper_transcriber import WhisperTranscriber
+from audioscript.processors import create_transcriber
+from audioscript.processors.backend_protocol import TranscriberBackend, TranscriptionResult
 from audioscript.utils.file_utils import ProcessingManifest, get_file_hash, get_output_path
 from audioscript.utils.metadata import extract_metadata
 
 logger = logging.getLogger(__name__)
+
+
+def _save_results(data: dict[str, Any], output_path: Path) -> None:
+    """Save transcription results to a JSON file."""
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    with open(output_path, "w", encoding="utf-8") as f:
+        json.dump(data, f, indent=2, ensure_ascii=False, default=str)
+
+
+def _create_checkpoint(result: TranscriptionResult | dict[str, Any]) -> str:
+    """Create a context-priming checkpoint from transcription."""
+    if isinstance(result, TranscriptionResult):
+        return json.dumps({"text": result.text})
+    return json.dumps({"text": result.get("text", "")})
+
+
+def _generate_summary(result_dict: dict[str, Any]) -> str:
+    """Generate a basic extractive summary (first 25 words).
+
+    For production use, replace with an LLM-based summarizer.
+    """
+    text = result_dict.get("text", "")
+    words = text.split()
+    if len(words) <= 25:
+        return text
+    return " ".join(words[:25]) + "..."
 
 
 class AudioProcessor:
@@ -23,23 +52,19 @@ class AudioProcessor:
         self,
         settings: AudioScriptConfig,
         manifest: ProcessingManifest,
-        console: Optional[Console] = None,
+        console: Console | None = None,
     ) -> None:
         self.settings = settings
         self.manifest = manifest
         self.console = console or Console()
-        self._transcriber: Optional[WhisperTranscriber] = None
-        self._diarizer: Optional[Any] = None
-        self._speaker_db: Optional[Any] = None
+        self._transcriber: TranscriberBackend | None = None
+        self._diarizer: Any = None
+        self._speaker_db: Any = None
 
-    def _get_transcriber(self) -> WhisperTranscriber:
-        """Get or lazily initialize the Whisper transcriber."""
+    def _get_transcriber(self) -> TranscriberBackend:
+        """Get or lazily initialize the transcription backend."""
         if self._transcriber is None:
-            self._transcriber = WhisperTranscriber(
-                model_name=self.settings.model,
-                tier=self.settings.tier.value,
-                download_root=self.settings.download_root,
-            )
+            self._transcriber = create_transcriber(self.settings)
         return self._transcriber
 
     def _get_diarizer(self) -> Any:
@@ -56,7 +81,7 @@ class AudioProcessor:
             )
         return self._diarizer
 
-    def _get_speaker_db(self) -> Optional[Any]:
+    def _get_speaker_db(self) -> Any:
         """Get or lazily initialize the speaker database."""
         if self._speaker_db is None and self.settings.speaker_db:
             from audioscript.processors.diarizer import SpeakerDatabase
@@ -80,9 +105,9 @@ class AudioProcessor:
         """Process a single audio file.
 
         Returns True if processing succeeded, False otherwise.
-        Retries up to max_retries times with exponential backoff unless
-        no_retry is set.
         """
+        from audioscript.utils.error_classification import classify_error, should_retry
+
         file_hash = get_file_hash(file_path)
 
         # Skip already-processed files unless --force
@@ -112,38 +137,62 @@ class AudioProcessor:
                 # Clean audio if requested
                 audio_to_process = file_path
                 if self.settings.clean_audio:
-                    self.console.print(
-                        f"[yellow]Warning:[/] --clean-audio is a placeholder "
-                        f"(copies file unchanged). Proceeding with: {file_path.name}"
-                    )
-                    cleaned_path = output_dir / "cleaned" / file_path.name
-                    cleaned_path.parent.mkdir(parents=True, exist_ok=True)
-                    audio_to_process = transcriber.clean_audio(file_path, cleaned_path)
+                    try:
+                        from audioscript.processors.audio_cleaner import (
+                            clean_audio as do_clean,
+                        )
+                        cleaned_path = output_dir / "cleaned" / file_path.name
+                        cleaned_path.parent.mkdir(parents=True, exist_ok=True)
+                        audio_to_process, clean_stats = do_clean(
+                            file_path, cleaned_path,
+                            level=self.settings.clean_level,
+                        )
+                        if clean_stats["skipped"]:
+                            self.console.print(
+                                f"Audio clean skipped (SNR {clean_stats['snr_before']} dB): {file_path.name}"
+                            )
+                        else:
+                            self.console.print(
+                                f"Cleaned audio: SNR {clean_stats['snr_before']} → {clean_stats['snr_after']} dB"
+                            )
+                        audio_to_process = Path(audio_to_process)
+                    except ImportError:
+                        self.console.print(
+                            "[yellow]Warning:[/] noisereduce not installed. "
+                            "Skipping audio cleaning."
+                        )
 
-                # Run standalone VAD if requested (C1 fix: independent of --diarize)
-                vad_clips: Optional[List[float]] = None
+                # Run standalone VAD if requested (independent of --diarize)
+                vad_clips: list[float] | None = None
+                use_builtin_vad = False
+
                 if self.settings.vad:
-                    diarizer = self._get_diarizer()
-                    self.console.print(f"Running VAD: {file_path.name}")
-                    vad_result = diarizer.detect_speech(audio_to_process)
-                    self.console.print(
-                        f"Speech: {vad_result['speech_percentage']}% "
-                        f"({vad_result['total_speech_duration']}s / {vad_result['total_duration']}s)"
-                    )
-                    # Save VAD timeline
-                    vad_path = get_output_path(file_path, output_dir, "vad.json")
-                    vad_path.parent.mkdir(parents=True, exist_ok=True)
-                    with open(vad_path, "w") as f:
-                        json.dump(vad_result, f, indent=2)
+                    if transcriber.backend_name == "faster-whisper":
+                        # Use faster-whisper's built-in Silero VAD
+                        use_builtin_vad = True
+                        self.console.print(f"VAD: using built-in Silero VAD")
+                    else:
+                        # Use pyannote VAD for vanilla Whisper
+                        diarizer = self._get_diarizer()
+                        self.console.print(f"Running VAD: {file_path.name}")
+                        vad_result = diarizer.detect_speech(audio_to_process)
+                        self.console.print(
+                            f"Speech: {vad_result['speech_percentage']}% "
+                            f"({vad_result['total_speech_duration']}s / {vad_result['total_duration']}s)"
+                        )
+                        # Save VAD timeline
+                        vad_path = get_output_path(file_path, output_dir, "vad.json")
+                        vad_path.parent.mkdir(parents=True, exist_ok=True)
+                        with open(vad_path, "w") as f:
+                            json.dump(vad_result, f, indent=2)
 
-                    # H5 fix: Convert VAD speech regions to clip_timestamps
-                    # so Whisper only processes speech (reduces hallucinations)
-                    if vad_result["speech_segments"] and self.settings.clip_timestamps is None:
-                        vad_clips = []
-                        for seg in vad_result["speech_segments"]:
-                            vad_clips.extend([seg["start"], seg["end"]])
+                        # Convert VAD speech regions to clip_timestamps
+                        if vad_result["speech_segments"] and self.settings.clip_timestamps is None:
+                            vad_clips = []
+                            for seg in vad_result["speech_segments"]:
+                                vad_clips.extend([seg["start"], seg["end"]])
 
-                # Diarization requires word_timestamps for accurate speaker assignment
+                # Diarization requires word_timestamps
                 word_timestamps = self.settings.word_timestamps
                 if self.settings.diarize and not word_timestamps:
                     word_timestamps = True
@@ -153,62 +202,107 @@ class AudioProcessor:
 
                 self.console.print(
                     f"Transcribing: {file_path.name} "
-                    f"(tier={self.settings.tier.value}, attempt {attempt}/{max_attempts})"
+                    f"(tier={self.settings.tier.value}, backend={transcriber.backend_name}, "
+                    f"attempt {attempt}/{max_attempts})"
                 )
 
-                # Determine clip_timestamps: user-provided > VAD-derived > default
+                # Determine clip_timestamps
                 clip_ts = self.settings.parse_clip_timestamps()
                 if vad_clips is not None:
                     clip_ts = vad_clips
 
-                # Build transcription kwargs from settings
-                result = transcriber.transcribe(
-                    audio_to_process,
-                    language=self.settings.language,
-                    verbose=True,
-                    checkpoint=checkpoint,
-                    temperature=self.settings.parse_temperature(),
-                    word_timestamps=word_timestamps,
-                    hallucination_silence_threshold=self.settings.hallucination_silence_threshold,
-                    beam_size=self.settings.beam_size,
-                    best_of=self.settings.best_of,
-                    clip_timestamps=clip_ts,
-                    carry_initial_prompt=self.settings.carry_initial_prompt,
-                    condition_on_previous_text=self.settings.condition_on_previous_text,
-                    suppress_tokens=self.settings.suppress_tokens,
-                    suppress_blank=self.settings.suppress_blank,
-                    fp16=self.settings.fp16,
-                    patience=self.settings.patience,
-                    length_penalty=self.settings.length_penalty,
-                )
+                # Build transcription kwargs
+                transcribe_kwargs: dict[str, Any] = {
+                    "language": self.settings.language,
+                    "temperature": self.settings.parse_temperature(),
+                    "word_timestamps": word_timestamps,
+                    "beam_size": self.settings.beam_size,
+                    "best_of": self.settings.best_of,
+                    "condition_on_previous_text": self.settings.condition_on_previous_text,
+                    "checkpoint": checkpoint,
+                    "suppress_tokens": self.settings.suppress_tokens,
+                    "suppress_blank": self.settings.suppress_blank,
+                    "clip_timestamps": clip_ts,
+                }
 
-                # C2 fix: Save checkpoint immediately after transcription
-                # so retries don't lose transcription context
-                new_checkpoint = transcriber.create_checkpoint(result)
-                checkpoint = new_checkpoint  # Update for potential retry
+                # Backend-specific kwargs
+                if self.settings.hallucination_silence_threshold is not None:
+                    transcribe_kwargs["hallucination_silence_threshold"] = (
+                        self.settings.hallucination_silence_threshold
+                    )
+                if self.settings.patience is not None:
+                    transcribe_kwargs["patience"] = self.settings.patience
+                if self.settings.length_penalty is not None:
+                    transcribe_kwargs["length_penalty"] = self.settings.length_penalty
+
+                # Whisper-specific kwargs
+                if transcriber.backend_name == "whisper":
+                    transcribe_kwargs["verbose"] = True
+                    transcribe_kwargs["fp16"] = self.settings.fp16
+                    transcribe_kwargs["carry_initial_prompt"] = self.settings.carry_initial_prompt
+
+                # Faster-whisper VAD
+                if use_builtin_vad:
+                    transcribe_kwargs["vad_filter"] = True
+
+                result = transcriber.transcribe(audio_to_process, **transcribe_kwargs)
+
+                # Save checkpoint immediately after transcription
+                new_checkpoint = _create_checkpoint(result)
+                checkpoint = new_checkpoint
                 self.manifest.update_file_status(
                     file_hash, "transcribed",
                     self.settings.tier.value, self.settings.version, new_checkpoint,
                 )
 
+                # Convert to dict for JSON output and downstream processing
+                result_dict = result.to_dict()
+
+                # Hallucination detection
+                avg_confidence = None
+                hallucination_flag_count = None
+                if self.settings.hallucination_filter != "off" and result.segments:
+                    try:
+                        from audioscript.processors.hallucination_detector import (
+                            analyze,
+                            apply_filter,
+                        )
+                        reports = analyze(
+                            result.segments,
+                            audio_path=str(audio_to_process),
+                            min_confidence=self.settings.min_confidence or 0.4,
+                        )
+                        result.segments = apply_filter(
+                            result.segments, reports,
+                            mode=self.settings.hallucination_filter,
+                        )
+                        # Compute aggregate metrics
+                        confidences = [r.confidence for r in reports if r.confidence is not None]
+                        avg_confidence = sum(confidences) / len(confidences) if confidences else None
+                        hallucination_flag_count = sum(1 for r in reports if r.risk in ("medium", "high"))
+                        # Rebuild dict after filtering
+                        result_dict = result.to_dict()
+                    except ImportError:
+                        pass
+
                 # Embed audio file metadata if requested
                 if self.settings.metadata:
                     try:
-                        result["metadata"] = extract_metadata(file_path)
+                        result_dict["metadata"] = extract_metadata(file_path)
                     except Exception as meta_err:
                         logger.warning("Metadata extraction failed: %s", meta_err)
 
-                # Save JSON before diarization (work is preserved even if diarization fails)
-                transcriber.save_results(result, transcription_path)
+                # Save JSON before diarization
+                _save_results(result_dict, transcription_path)
 
                 # Run speaker diarization if requested
                 if self.settings.diarize:
                     try:
-                        result = self._run_diarization(
-                            result, audio_to_process, file_path, output_dir,
+                        result_dict = self._run_diarization(
+                            result_dict, audio_to_process, file_path, output_dir,
                         )
                         # Re-save JSON with diarization data
-                        transcriber.save_results(result, transcription_path)
+                        _save_results(result_dict, transcription_path)
                     except Exception as diar_err:
                         self.console.print(
                             f"[yellow]Warning:[/] Diarization failed for {file_path.name}: {diar_err}. "
@@ -218,40 +312,57 @@ class AudioProcessor:
 
                 # Save additional output formats if requested
                 fmt = self.settings.output_format
-                if fmt != "json":
-                    writer_options = {
-                        "highlight_words": self.settings.highlight_words,
-                        "max_line_width": self.settings.max_line_width,
-                        "max_line_count": self.settings.max_line_count,
-                        "max_words_per_line": self.settings.max_words_per_line,
-                    }
-                    transcriber.save_formatted_output(
-                        result, audio_to_process, output_dir,
-                        output_format=fmt, options=writer_options,
-                    )
+                if fmt == "markdown":
+                    self._save_markdown(result_dict, file_path, output_dir)
+                elif fmt not in ("json",):
+                    # Use Whisper's built-in writers for srt/vtt/txt/tsv
+                    from audioscript.processors.whisper_transcriber import WhisperTranscriber
+                    if isinstance(transcriber, WhisperTranscriber):
+                        writer_options = {
+                            "highlight_words": self.settings.highlight_words,
+                            "max_line_width": self.settings.max_line_width,
+                            "max_line_count": self.settings.max_line_count,
+                            "max_words_per_line": self.settings.max_words_per_line,
+                        }
+                        transcriber.save_formatted_output(
+                            result_dict, audio_to_process, output_dir,
+                            output_format=fmt, options=writer_options,
+                        )
 
                 # Generate summary if requested
+                summary_text = None
                 if self.settings.summarize:
                     self.console.print(f"Generating summary: {file_path.name}")
+                    summary_text = _generate_summary(result_dict)
                     summary_path = get_output_path(file_path, output_dir, "summary.txt")
-                    summary = transcriber.generate_summary(result)
-                    transcriber.save_summary(summary, summary_path)
+                    summary_path.parent.mkdir(parents=True, exist_ok=True)
+                    with open(summary_path, "w", encoding="utf-8") as f:
+                        f.write(summary_text)
+
+                # Export to MiNotes if requested
+                if self.settings.export == "minotes":
+                    self._export_minotes(result_dict, file_path, summary_text)
 
                 # Mark as completed
                 self.manifest.update_file_status(
                     file_hash, "completed",
                     self.settings.tier.value, self.settings.version, new_checkpoint,
+                    backend=transcriber.backend_name,
+                    confidence=avg_confidence,
+                    hallucination_flags=hallucination_flag_count,
                 )
                 return True
 
             except Exception as e:
+                error_category = classify_error(e).value
                 self.manifest.update_file_status(
                     file_hash, "error",
                     self.settings.tier.value, self.settings.version,
                     checkpoint, str(e),
+                    error_category=error_category,
                 )
 
-                if attempt >= max_attempts:
+                if not should_retry(e, self.settings.retry_strategy, attempt, max_attempts):
                     self.console.print(f"[red]Failed[/] {file_path.name}: {e}")
                     return False
 
@@ -263,18 +374,71 @@ class AudioProcessor:
 
         return False
 
+    def _save_markdown(
+        self, result_dict: dict[str, Any], file_path: Path, output_dir: Path,
+    ) -> None:
+        """Save transcription as Obsidian-compatible markdown."""
+        try:
+            from audioscript.formatters.markdown_formatter import render_markdown
+
+            summary = None
+            if self.settings.summarize:
+                summary = _generate_summary(result_dict)
+
+            md_content = render_markdown(
+                result_dict, file_path,
+                metadata=result_dict.get("metadata"),
+                summary=summary,
+            )
+            md_path = get_output_path(file_path, output_dir, "md")
+            md_path.parent.mkdir(parents=True, exist_ok=True)
+            md_path.write_text(md_content, encoding="utf-8")
+        except ImportError:
+            logger.warning("Markdown formatter not available")
+
+    def _export_minotes(
+        self,
+        result_dict: dict[str, Any],
+        file_path: Path,
+        summary: str | None,
+    ) -> None:
+        """Export transcription to MiNotes."""
+        try:
+            from audioscript.exporters.minotes_exporter import MiNotesExporter
+            from audioscript.formatters.markdown_formatter import render_markdown
+
+            exporter = MiNotesExporter(sync_dir=self.settings.minotes_sync_dir)
+            if not exporter.is_already_exported(file_path) or self.settings.force:
+                exporter.ensure_registered()
+                exporter.ensure_transcript_class()
+                md_content = render_markdown(
+                    result_dict, file_path,
+                    metadata=result_dict.get("metadata"),
+                    summary=summary,
+                )
+                export_path = exporter.export(md_content, file_path, result_dict)
+                self.console.print(f"Exported to MiNotes: {export_path}")
+
+                if summary:
+                    exporter.journal_entry(file_path, summary)
+        except ImportError:
+            logger.warning("MiNotes exporter not available")
+        except Exception as e:
+            self.console.print(f"[yellow]Warning:[/] MiNotes export failed: {e}")
+            logger.warning("MiNotes export failed: %s", e, exc_info=True)
+
     def _run_diarization(
         self,
-        result: Dict[str, Any],
+        result: dict[str, Any],
         audio_path: Path,
         file_path: Path,
         output_dir: Path,
-    ) -> Dict[str, Any]:
+    ) -> dict[str, Any]:
         """Run diarization pipeline and merge with transcription result."""
         self.console.print(f"Diarizing: {file_path.name}")
         diarizer = self._get_diarizer()
 
-        def diar_progress(step: str, completed: Optional[int], total: Optional[int]) -> None:
+        def diar_progress(step: str, completed: int | None, total: int | None) -> None:
             if step:
                 self.console.print(f"  [dim]{step}...[/]")
 
@@ -313,7 +477,7 @@ class AudioProcessor:
             emb_path = get_output_path(file_path, output_dir, "embeddings.json")
             diarizer.save_embeddings(diar_result["speaker_embeddings"], emb_path)
 
-        # H4 fix: Evaluate with error handling
+        # Evaluate with error handling
         if self.settings.reference_rttm:
             ref_path = Path(self.settings.reference_rttm)
             if not ref_path.exists():

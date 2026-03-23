@@ -8,6 +8,7 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 from audioscript.processors.whisper_transcriber import WhisperTranscriber
+from audioscript.processors.backend_protocol import TranscriptionResult
 
 
 @pytest.fixture
@@ -71,6 +72,18 @@ def test_init_download_root(mock_whisper):
     assert t.download_root == "/tmp/models"
 
 
+# --- Protocol compliance ---
+
+def test_backend_name(mock_whisper):
+    t = WhisperTranscriber()
+    assert t.backend_name == "whisper"
+
+
+def test_supports_confidence(mock_whisper):
+    t = WhisperTranscriber()
+    assert t.supports_confidence is False
+
+
 # --- Model loading ---
 
 def test_lazy_model_loading(mock_whisper):
@@ -105,8 +118,11 @@ def test_transcribe_basic(mock_whisper):
     t = WhisperTranscriber()
     result = t.transcribe("/tmp/audio.mp3")
     mock_model.transcribe.assert_called_once()
-    assert "text" in result
-    assert "segments" in result
+    assert isinstance(result, TranscriptionResult)
+    assert result.text == "Hello world."
+    assert result.language == "en"
+    assert len(result.segments) == 1
+    assert result.backend == "whisper"
 
 
 def test_transcribe_passes_params(mock_whisper):
@@ -150,12 +166,25 @@ def test_transcribe_path_object(mock_whisper):
     assert isinstance(call_args[0][0], str)
 
 
+def test_transcribe_to_dict(mock_whisper):
+    """Test that TranscriptionResult.to_dict() returns the expected format."""
+    t = WhisperTranscriber()
+    result = t.transcribe("/tmp/audio.mp3")
+    d = result.to_dict()
+    assert "text" in d
+    assert "segments" in d
+    assert "language" in d
+    assert "backend" in d
+    assert d["backend"] == "whisper"
+
+
 # --- Duplicate segment filtering ---
 
 def test_filters_duplicate_segments(mock_whisper):
     _, mock_model = mock_whisper
     mock_model.transcribe.return_value = {
         "text": "Hello Hello Goodbye",
+        "language": "en",
         "segments": [
             {"start": 0.0, "end": 1.0, "text": " Hello"},
             {"start": 1.0, "end": 2.0, "text": " Hello"},  # duplicate
@@ -164,15 +193,16 @@ def test_filters_duplicate_segments(mock_whisper):
     }
     t = WhisperTranscriber()
     result = t.transcribe("/tmp/audio.mp3")
-    assert len(result["segments"]) == 2
-    assert "Hello" in result["text"]
-    assert "Goodbye" in result["text"]
+    assert len(result.segments) == 2
+    assert "Hello" in result.text
+    assert "Goodbye" in result.text
 
 
 def test_filters_empty_segments(mock_whisper):
     _, mock_model = mock_whisper
     mock_model.transcribe.return_value = {
         "text": "Hello",
+        "language": "en",
         "segments": [
             {"start": 0.0, "end": 1.0, "text": ""},
             {"start": 1.0, "end": 2.0, "text": " Hello"},
@@ -180,7 +210,7 @@ def test_filters_empty_segments(mock_whisper):
     }
     t = WhisperTranscriber()
     result = t.transcribe("/tmp/audio.mp3")
-    assert len(result["segments"]) == 1
+    assert len(result.segments) == 1
 
 
 # --- Save/load methods ---
@@ -252,31 +282,6 @@ def test_create_checkpoint_empty(mock_whisper):
     cp = t.create_checkpoint({})
     data = json.loads(cp)
     assert data["text"] == ""
-
-
-# --- Clean audio ---
-
-def test_clean_audio_copies_file(mock_whisper):
-    t = WhisperTranscriber()
-    with tempfile.TemporaryDirectory() as tmp:
-        src = Path(tmp) / "input.mp3"
-        src.write_bytes(b"fake audio")
-        dst = Path(tmp) / "output" / "cleaned.mp3"
-
-        result = t.clean_audio(src, dst)
-        assert result.exists()
-        assert result.read_bytes() == b"fake audio"
-
-
-def test_clean_audio_default_path(mock_whisper):
-    t = WhisperTranscriber()
-    with tempfile.TemporaryDirectory() as tmp:
-        src = Path(tmp) / "input.mp3"
-        src.write_bytes(b"fake audio")
-
-        result = t.clean_audio(src)
-        assert result.name == "input_cleaned.mp3"
-        assert result.exists()
 
 
 # --- Formatted output ---

@@ -93,7 +93,7 @@ def test_processing_manifest_lifecycle():
 
         # Create a new manifest
         manifest = ProcessingManifest(manifest_path)
-        assert manifest.data["version"] == "1.0"
+        assert manifest.data["version"] == "1.1"
         assert manifest.data["files"] == {}
 
         # Update a file's status

@@ -1,12 +1,13 @@
 """Main transcription command — the core AudioScript workflow."""
 
+from __future__ import annotations
+
 import glob
+import multiprocessing
 import os
-import signal
 import sys
-import threading
 from pathlib import Path
-from typing import Optional
+from typing import Any, Optional
 
 import typer
 from rich.progress import Progress, SpinnerColumn, TextColumn, TimeElapsedColumn
@@ -40,29 +41,61 @@ class _TimeoutError(Exception):
     pass
 
 
-def _run_with_timeout(func, timeout_seconds):
-    """Run func() with a timeout. Returns (result, error)."""
-    result_holder = [None]
-    error_holder = [None]
+def _worker_fn(
+    audio_file: str,
+    settings_dict: dict[str, Any],
+    manifest_path: str,
+    result_queue: multiprocessing.Queue,  # type: ignore[type-arg]
+) -> None:
+    """Worker function for process-based timeout and concurrency."""
+    try:
+        from audioscript.config.settings import AudioScriptConfig
+        settings = AudioScriptConfig(**settings_dict)
+        manifest = ProcessingManifest(Path(manifest_path))
+        processor = AudioProcessor(settings, manifest)
+        success = processor.process_file(Path(audio_file))
+        result_queue.put(("ok", success))
+    except Exception as e:
+        result_queue.put(("error", str(e)))
 
-    def target():
+
+def _run_with_timeout(
+    func: Any, timeout_seconds: int,
+) -> tuple[Any, Exception | None]:
+    """Run func() in a subprocess with a hard timeout.
+
+    Uses multiprocessing so the worker can actually be terminated,
+    unlike the old thread-based approach.
+    """
+    ctx = multiprocessing.get_context("spawn")
+    result_queue: multiprocessing.Queue[Any] = ctx.Queue()
+
+    def wrapper(q: multiprocessing.Queue) -> None:  # type: ignore[type-arg]
         try:
-            result_holder[0] = func()
+            result = func()
+            q.put(("ok", result))
         except Exception as e:
-            error_holder[0] = e
+            q.put(("error", e))
 
-    thread = threading.Thread(target=target)
-    thread.start()
-    thread.join(timeout=timeout_seconds)
+    proc = ctx.Process(target=wrapper, args=(result_queue,))
+    proc.start()
+    proc.join(timeout=timeout_seconds)
 
-    if thread.is_alive():
-        # Thread is still running — we can't kill it, but we report timeout
+    if proc.is_alive():
+        proc.terminate()
+        proc.join(timeout=5)
+        if proc.is_alive():
+            proc.kill()
+            proc.join(timeout=2)
         return None, _TimeoutError(f"Processing exceeded {timeout_seconds}s timeout")
 
-    if error_holder[0]:
-        return None, error_holder[0]
+    if result_queue.empty():
+        return None, RuntimeError("Worker process exited without result")
 
-    return result_holder[0], None
+    status, payload = result_queue.get_nowait()
+    if status == "error":
+        return None, payload if isinstance(payload, Exception) else RuntimeError(str(payload))
+    return payload, None
 
 
 @transcribe_app.command(name="transcribe", hidden=True)
@@ -119,6 +152,18 @@ def transcribe(
     download_root: Optional[str] = typer.Option(None, "--download-root", help="Model cache directory"),
     # --- Metadata ---
     metadata: Optional[bool] = typer.Option(None, "--metadata", help="Extract and embed audio file metadata (date, device, author, codec, etc.)"),
+    # --- Backend ---
+    backend: Optional[str] = typer.Option(None, "--backend", help="Transcription backend: faster-whisper, whisper"),
+    # --- Audio cleaning ---
+    clean_level: Optional[str] = typer.Option(None, "--clean-level", help="Noise reduction level: light, moderate, aggressive"),
+    # --- Hallucination detection ---
+    min_confidence: Optional[float] = typer.Option(None, "--min-confidence", help="Min confidence threshold (0-1) for segments"),
+    hallucination_filter: Optional[str] = typer.Option(None, "--hallucination-filter", help="Hallucination filter mode: auto, flag, off"),
+    # --- Error handling ---
+    retry_strategy: Optional[str] = typer.Option(None, "--retry-strategy", help="Retry strategy: smart, always, never"),
+    # --- Export ---
+    export: Optional[str] = typer.Option(None, "--export", help="Export target: minotes"),
+    minotes_sync_dir: Optional[str] = typer.Option(None, "--minotes-sync-dir", help="MiNotes sync directory path"),
     # --- Shortcut ---
     shortcut: Optional[str] = typer.Option(None, "--shortcut", "-s", help="Preset shortcut: +subtitle, +meeting, +draft, +hq"),
     # --- Batch control ---
@@ -220,6 +265,10 @@ def transcribe(
         "max_line_width": max_line_width, "max_line_count": max_line_count,
         "max_words_per_line": max_words_per_line, "download_root": download_root,
         "metadata": metadata,
+        "backend": backend, "clean_level": clean_level,
+        "min_confidence": min_confidence, "hallucination_filter": hallucination_filter,
+        "retry_strategy": retry_strategy,
+        "export": export, "minotes_sync_dir": minotes_sync_dir,
     }
     # Merge shortcut presets (lower priority than explicit CLI args)
     for k, v in shortcut_overrides.items():
