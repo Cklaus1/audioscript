@@ -60,6 +60,7 @@ class AudioProcessor:
         self._transcriber: TranscriberBackend | None = None
         self._diarizer: Any = None
         self._speaker_db: Any = None
+        self._identity_db: Any = None
 
     def _get_transcriber(self) -> TranscriberBackend:
         """Get or lazily initialize the transcription backend."""
@@ -82,7 +83,7 @@ class AudioProcessor:
         return self._diarizer
 
     def _get_speaker_db(self) -> Any:
-        """Get or lazily initialize the speaker database."""
+        """Get or lazily initialize the legacy speaker database."""
         if self._speaker_db is None and self.settings.speaker_db:
             from audioscript.processors.diarizer import SpeakerDatabase
 
@@ -100,6 +101,26 @@ class AudioProcessor:
                     f"{', '.join(names)}"
                 )
         return self._speaker_db
+
+    def _get_identity_db(self) -> Any:
+        """Get or lazily initialize the speaker identity database."""
+        if self._identity_db is None:
+            from audioscript.speakers.identity_db import SpeakerIdentityDB
+
+            # Use explicit path or default to output_dir
+            db_path = getattr(self.settings, "speaker_identity_db", None)
+            if db_path:
+                db_path = Path(db_path)
+            else:
+                db_path = Path(self.settings.output_dir) / "speaker_identities.json"
+
+            self._identity_db = SpeakerIdentityDB(db_path)
+            self.console.print(
+                f"Speaker identity DB: {db_path} "
+                f"({self._identity_db.cluster_count} clusters, "
+                f"{self._identity_db.confirmed_count} confirmed)"
+            )
+        return self._identity_db
 
     def process_file(self, file_path: Path) -> bool:
         """Process a single audio file.
@@ -396,17 +417,43 @@ class AudioProcessor:
             progress_callback=diar_progress,
         )
 
-        # Speaker identification via database
-        speaker_db = self._get_speaker_db()
-        result = diarizer.assign_speakers(
-            result, diar_result,
-            speaker_db=speaker_db,
-            similarity_threshold=self.settings.speaker_similarity_threshold,
-            allow_overlap=self.settings.allow_overlap,
-        )
+        # Speaker identity resolution (new system)
+        try:
+            from audioscript.speakers.resolution import SpeakerResolutionEngine
 
-        # Report
-        self.console.print(f"Found [bold]{diar_result['num_speakers']}[/] speakers")
+            identity_db = self._get_identity_db()
+            call_id = get_file_hash(file_path) if file_path.exists() else file_path.stem
+            engine = SpeakerResolutionEngine(
+                identity_db,
+                match_threshold=self.settings.speaker_similarity_threshold,
+            )
+            resolutions = engine.resolve_call(diar_result, call_id, file_path)
+            result = engine.apply_to_transcript(result, resolutions)
+
+            # Report resolution results
+            new_count = sum(1 for r in resolutions if r.is_new_cluster)
+            known_count = len(resolutions) - new_count
+            self.console.print(
+                f"Found [bold]{diar_result['num_speakers']}[/] speakers "
+                f"({known_count} linked, {new_count} new)"
+            )
+            for r in resolutions:
+                name = r.display_name or r.speaker_cluster_id
+                self.console.print(
+                    f"  {r.local_label} → {name} "
+                    f"({r.status}, {r.confidence:.0%})"
+                )
+        except Exception as res_err:
+            logger.warning("Speaker resolution failed, falling back to basic assignment: %s", res_err)
+            # Fallback to legacy speaker DB matching
+            speaker_db = self._get_speaker_db()
+            result = diarizer.assign_speakers(
+                result, diar_result,
+                speaker_db=speaker_db,
+                similarity_threshold=self.settings.speaker_similarity_threshold,
+                allow_overlap=self.settings.allow_overlap,
+            )
+            self.console.print(f"Found [bold]{diar_result['num_speakers']}[/] speakers")
         overlap = diar_result.get("overlap", {})
         if overlap.get("overlap_percentage", 0) > 0:
             self.console.print(

@@ -109,6 +109,11 @@ class AudioScriptConfig(BaseModel):
     export: str | None = Field(default=None)
     minotes_sync_dir: str | None = Field(default=None)
 
+    # Speaker identity options
+    speaker_identity_db: str | None = Field(default=None)
+    speaker_match_threshold: float = Field(default=0.70, ge=0.0, le=1.0)
+    speaker_auto_confirm_threshold: float = Field(default=0.92, ge=0.0, le=1.0)
+
     @field_validator("output_format")
     @classmethod
     def validate_output_format(cls, v: str) -> str:
