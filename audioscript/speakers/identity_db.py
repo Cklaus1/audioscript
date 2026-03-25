@@ -26,7 +26,7 @@ from audioscript.speakers.models import (
     now_iso,
 )
 
-from audioscript.utils.math_utils import cosine_similarity as _cosine_similarity
+from audioscript.utils.math_utils import batch_cosine_best_match, cosine_similarity as _cosine_similarity
 
 logger = logging.getLogger(__name__)
 
@@ -100,22 +100,12 @@ class SpeakerIdentityDB:
 
         Returns (speaker_cluster_id, score) or (None, 0.0).
         """
-        best_id = None
-        best_score = 0.0
-
-        for cluster_id, identity_data in self.data["identities"].items():
-            centroid = identity_data.get("embedding_centroid", [])
-            if not centroid:
-                continue
-
-            score = _cosine_similarity(embedding, centroid)
-            if score > best_score:
-                best_score = score
-                best_id = cluster_id
-
-        if best_id and best_score >= threshold:
-            return best_id, best_score
-        return None, best_score
+        candidates = {
+            cid: data.get("embedding_centroid", [])
+            for cid, data in self.data["identities"].items()
+            if data.get("embedding_centroid")
+        }
+        return batch_cosine_best_match(embedding, candidates, threshold=threshold)
 
     # --- Cluster Management ---
 
@@ -452,6 +442,71 @@ class SpeakerIdentityDB:
         self.save()
         logger.info("Merged %s into %s", merge_id, keep_id)
         return True
+
+    def compact(
+        self,
+        max_occurrences_per_cluster: int = 50,
+        max_evidence_age_days: int = 90,
+    ) -> dict[str, int]:
+        """Compact the database to prevent unbounded growth.
+
+        Retains only the most recent N occurrences per cluster and
+        removes evidence older than max_evidence_age_days.
+
+        Returns counts of removed records.
+        """
+        import time
+
+        now = time.time()
+        cutoff = now - (max_evidence_age_days * 86400)
+
+        # Compact occurrences: keep latest N per cluster
+        occ_by_cluster: dict[str, list[dict]] = {}
+        for occ in self.data["occurrences"]:
+            cid = occ.get("speaker_cluster_id", "")
+            occ_by_cluster.setdefault(cid, []).append(occ)
+
+        kept_occs = []
+        removed_occs = 0
+        for cid, occs in occ_by_cluster.items():
+            if len(occs) <= max_occurrences_per_cluster:
+                kept_occs.extend(occs)
+            else:
+                kept_occs.extend(occs[-max_occurrences_per_cluster:])
+                removed_occs += len(occs) - max_occurrences_per_cluster
+
+        self.data["occurrences"] = kept_occs
+
+        # Compact evidence: remove old records
+        kept_evidence = []
+        removed_evidence = 0
+        for ev in self.data["evidence"]:
+            created = ev.get("created_at", "")
+            try:
+                from datetime import datetime, timezone
+                ev_time = datetime.fromisoformat(created).timestamp()
+                if ev_time >= cutoff:
+                    kept_evidence.append(ev)
+                else:
+                    removed_evidence += 1
+            except (ValueError, TypeError):
+                kept_evidence.append(ev)  # Keep if unparseable
+
+        self.data["evidence"] = kept_evidence
+
+        if removed_occs > 0 or removed_evidence > 0:
+            self.save()
+            logger.info(
+                "Compacted DB: removed %d occurrences, %d evidence records",
+                removed_occs, removed_evidence,
+            )
+
+        return {
+            "removed_occurrences": removed_occs,
+            "removed_evidence": removed_evidence,
+            "kept_occurrences": len(kept_occs),
+            "kept_evidence": len(kept_evidence),
+        }
 
     def migrate_from_v1(self, old_db_path: Path) -> int:
         """Explicitly migrate an old v1 speakers.json file."""

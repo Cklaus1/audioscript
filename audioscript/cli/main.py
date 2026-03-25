@@ -24,6 +24,7 @@ from audioscript.cli.commands.check_cmd import check_app
 from audioscript.cli.commands.sync_cmd import sync_app
 from audioscript.cli.commands.speakers_cmd import speakers_app
 from audioscript.cli.commands.analyze_cmd import analyze_app
+from audioscript.cli.commands.cost_cmd import cost_app
 
 from rich.console import Console
 
@@ -47,6 +48,7 @@ app.add_typer(check_app, name="check", help="Check dependencies, auth, and GPU s
 app.add_typer(sync_app, name="sync", help="Auto-transcribe new audio files from watched directories.")
 app.add_typer(speakers_app, name="speakers", help="Manage speaker identities across calls.")
 app.add_typer(analyze_app, name="analyze", help="Re-run LLM analysis on existing transcripts.")
+app.add_typer(cost_app, name="cost", help="View LLM token usage and costs.")
 
 
 def version_callback(value: bool) -> None:
