@@ -288,7 +288,7 @@ def analyze_transcript(
                     client = _cached_client
                 else:
                     effective_base_url = base_url or (
-                        "http://localhost:8000/v1" if provider == "nim"
+                        "https://integrate.api.nvidia.com/v1" if provider == "nim"
                         else None
                     )
                     client = openai.OpenAI(

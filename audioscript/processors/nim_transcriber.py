@@ -29,13 +29,14 @@ class NimTranscriber(TranscriberBackend):
 
     def __init__(
         self,
-        nim_url: str = "http://localhost:9000",
+        nim_url: str = "https://integrate.api.nvidia.com/v1",
         model_name: str | None = None,
         timeout: int = 600,
     ):
         self.nim_url = nim_url.rstrip("/")
-        self.model_name = model_name  # e.g. "parakeet-1-1b-ctc-en-us"
+        self.model_name = model_name  # e.g. "nvidia/parakeet-ctc-1.1b-asr"
         self.timeout = timeout
+        self._is_hosted = "nvidia.com" in self.nim_url
 
     def load_model(self) -> None:
         """No local model to load — the NIM container handles it."""
@@ -58,6 +59,7 @@ class NimTranscriber(TranscriberBackend):
         Raises:
             RuntimeError: If the NIM endpoint returns a non-200 response.
         """
+        import os
         import requests
 
         audio_path = Path(audio_path)
@@ -67,11 +69,24 @@ class NimTranscriber(TranscriberBackend):
         if self.model_name:
             data["model"] = self.model_name
 
+        # Auth headers for NVIDIA hosted API
+        headers: dict[str, str] = {}
+        if self._is_hosted:
+            api_key = os.environ.get("NVIDIA_API_KEY")
+            if api_key:
+                headers["Authorization"] = f"Bearer {api_key}"
+
+        # Determine endpoint path
+        endpoint = f"{self.nim_url}/audio/transcriptions"
+        if "localhost" in self.nim_url or "127.0.0.1" in self.nim_url:
+            endpoint = f"{self.nim_url}/v1/audio/transcriptions"
+
         with open(audio_path, "rb") as f:
             response = requests.post(
-                f"{self.nim_url}/v1/audio/transcriptions",
+                endpoint,
                 files={"file": (audio_path.name, f)},
                 data=data,
+                headers=headers,
                 timeout=self.timeout,
             )
 
@@ -116,11 +131,8 @@ class NimTranscriber(TranscriberBackend):
         )
 
     def detect_language(self, audio_path: str | Path) -> dict[str, Any]:
-        """Detect language via the NIM endpoint.
-
-        Sends a short transcription request and returns the detected
-        language from the response.
-        """
+        """Detect language via the NIM endpoint."""
+        import os
         import requests
 
         audio_path = Path(audio_path)
@@ -128,11 +140,22 @@ class NimTranscriber(TranscriberBackend):
         if self.model_name:
             data["model"] = self.model_name
 
+        headers: dict[str, str] = {}
+        if self._is_hosted:
+            api_key = os.environ.get("NVIDIA_API_KEY")
+            if api_key:
+                headers["Authorization"] = f"Bearer {api_key}"
+
+        endpoint = f"{self.nim_url}/audio/transcriptions"
+        if "localhost" in self.nim_url or "127.0.0.1" in self.nim_url:
+            endpoint = f"{self.nim_url}/v1/audio/transcriptions"
+
         with open(audio_path, "rb") as f:
             response = requests.post(
-                f"{self.nim_url}/v1/audio/transcriptions",
+                endpoint,
                 files={"file": (audio_path.name, f)},
                 data=data,
+                headers=headers,
                 timeout=self.timeout,
             )
 

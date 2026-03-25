@@ -94,7 +94,7 @@ class AudioScriptConfig(BaseModel):
 
     # Backend options
     backend: str = Field(default="faster-whisper")
-    nim_asr_url: str = Field(default="http://localhost:9000")
+    nim_asr_url: str = Field(default="https://integrate.api.nvidia.com/v1")  # NVIDIA hosted API; use http://localhost:9000 for local container
 
     # Audio cleaning options
     clean_level: str = Field(default="moderate")
