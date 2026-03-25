@@ -1,29 +1,24 @@
-# AudioScript default configuration
+# AudioScript configuration
+# Run `audioscript init` for guided setup, or `audioscript check` to verify.
+
+# Core settings
 output_dir: "./output"
-tier: "draft"                    # draft (base), balanced (turbo), or high_quality (large-v3)
-version: "1.0"
-clean_audio: false
-summarize: false
-force: false
-no_retry: false
-# model: "base"                 # Override tier with a specific model (e.g. base.en, turbo, large-v3)
-# language: "en"                # Language code, or omit for auto-detect
+tier: "draft"                    # draft (fast), balanced (turbo), high_quality (large-v3)
 
-# Whisper transcription options
-# temperature: "0.0,0.2,0.4,0.6,0.8,1.0"  # Fallback temperatures for decoding
-# word_timestamps: false        # Extract word-level timestamps
-# hallucination_silence_threshold: null  # Skip hallucinated text in silent sections (seconds)
-# beam_size: null               # Beam search width (default: 5 in whisper)
-# best_of: null                 # Number of candidates for sampling
-# clip_timestamps: null         # Process specific time ranges (e.g. "30,60,90")
-# carry_initial_prompt: false   # Carry prompt across all decode windows
+# LLM analysis — set ANTHROPIC_API_KEY env var to enable AI summaries, titles, action items
+# llm_model: "claude-sonnet-4-6"  # claude-sonnet-4-6 (default), claude-haiku-4-5-20251001 (cheaper)
 
-# Output options
-# output_format: "json"         # json, txt, vtt, srt, tsv, or all
-# highlight_words: false         # Underline words in VTT/SRT (requires word_timestamps)
-# max_line_width: null           # Max characters per subtitle line
-# max_line_count: null           # Max lines per subtitle entry
-# max_words_per_line: null       # Max words per subtitle line
+# Speaker diarization — set HF_TOKEN env var to enable
+# diarize: true
 
-# Model options
-# download_root: null            # Custom directory for model cache
+# Sync — auto-transcribe new audio files from watched directories
+# sync:
+#   sources:
+#     - path: "C:\\Users\\yourname\\OneDrive\\Documents\\Sound Recordings"
+#       tier: balanced
+#       diarize: true
+#   output_dir: "./transcripts/sync"
+#   output_format: markdown
+#   minotes:
+#     enabled: false
+#     folder: "Transcripts"

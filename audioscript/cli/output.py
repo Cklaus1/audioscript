@@ -199,6 +199,8 @@ def emit_error(
         ctx.console.print(f"[bold red]Error ({error_type}):[/] {message}")
         if hint:
             ctx.console.print(f"[dim]Hint: {hint}[/]")
+        if code in (ExitCode.AUTH_ERROR, ExitCode.TRANSCRIPTION_ERROR):
+            ctx.console.print("[dim]Run `audioscript check` to verify your setup.[/]")
     raise SystemExit(code)
 
 

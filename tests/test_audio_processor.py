@@ -35,6 +35,7 @@ def _make_settings(**overrides) -> AudioScriptConfig:
         "no_retry": True,
         "max_retries": 3,
         "output_dir": "./output",
+        "output_format": "json",  # Use JSON in tests (markdown tries to write files)
         "backend": "faster-whisper",
         "hallucination_filter": "off",
     }

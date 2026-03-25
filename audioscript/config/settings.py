@@ -80,7 +80,7 @@ class AudioScriptConfig(BaseModel):
     length_penalty: float | None = Field(default=None)
 
     # Output options
-    output_format: str = Field(default="json")
+    output_format: str = Field(default="markdown")
     highlight_words: bool = Field(default=False)
     max_line_width: int | None = Field(default=None, ge=1)
     max_line_count: int | None = Field(default=None, ge=1)

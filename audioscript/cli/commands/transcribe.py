@@ -80,6 +80,7 @@ def _run_with_timeout(
 def transcribe(
     ctx: typer.Context,
     # --- Core ---
+    input_file: Optional[str] = typer.Argument(None, help="Audio file or glob (also accepts --input)"),
     input: Optional[str] = typer.Option(None, "--input", "-i", help="Audio file or glob pattern"),
     output_dir: Optional[str] = typer.Option(None, "--output-dir", "-o", help="Output directory"),
     tier: Optional[TranscriptionTier] = typer.Option(None, "--tier", "-t", help="Quality tier: draft, balanced, high_quality"),
@@ -146,6 +147,10 @@ def transcribe(
 ) -> None:
     """Transcribe audio files with optional diarization, VAD, and subtitle output."""
     cli: CLIContext = ctx.obj
+
+    # Merge positional arg with --input (positional takes precedence)
+    if input_file and not input:
+        input = input_file
 
     # Apply shortcut presets
     shortcut_overrides = {}
@@ -430,6 +435,7 @@ def transcribe(
 
         emit_progress(cli, "", 100, "Complete")
         cli.console.print(f"\n[bold green]Complete![/] {successful} succeeded, {failed} failed")
+        cli.console.print(f"Output: [bold]{output_path.absolute()}[/]")
 
         emit(cli, "transcribe", {
             "files_processed": len(input_files),

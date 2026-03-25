@@ -1,174 +1,143 @@
 # AudioScript
 
-A CLI tool for audio transcription that processes audio files and generates high-quality transcriptions using OpenAI's Whisper model.
+Local-first audio transcription with speaker identity, LLM analysis, and OneDrive sync.
 
-## Features
+## What It Does
 
-- Process single audio files or batches using glob patterns
-- Two quality tiers: draft (faster) and high_quality (more accurate)
-- Locally run Whisper models (no API key needed)
-- Optionally clean audio before processing
-- Generate summaries of transcriptions
-- Resume long transcription jobs from checkpoints
-- Skip already processed files (unless forced to reprocess)
-- Retry failed jobs automatically
+Record voice memos, meetings, or calls → AudioScript automatically transcribes them, identifies speakers across calls, generates AI summaries with action items, and outputs structured markdown for your knowledge management system.
 
-## Installation
-
-### Requirements
-
-- Python 3.8 or higher
-- pip (Python package manager)
-- PyTorch (automatically installed as a dependency)
-
-### Install from Source
-
-1. Clone the repository:
-
-```bash
-git clone https://github.com/yourusername/audioscript.git
-cd audioscript
+```
+Audio file → Transcription → Speaker Identity → LLM Analysis → Markdown/MiNotes
+              (faster-whisper)   (cross-call)     (Claude)       (Obsidian-ready)
 ```
 
-2. Install the package in development mode:
+## Quick Start
 
 ```bash
+# Install
 pip install -e .
+
+# Verify setup
+audioscript check
+
+# Transcribe a single file
+audioscript transcribe meeting.mp3
+
+# Transcribe with speaker identification (requires HF_TOKEN)
+export HF_TOKEN=hf_your_token
+audioscript transcribe meeting.mp3 --diarize
+
+# Enable AI summaries, titles, and action items (requires ANTHROPIC_API_KEY)
+export ANTHROPIC_API_KEY=sk-ant-your_key
+audioscript transcribe meeting.mp3 --diarize
+
+# View the result
+audioscript show --latest
+
+# Search across all transcripts
+audioscript search -q "budget discussion"
 ```
 
-Alternatively, you can use the provided Makefile:
+## Key Features
 
-```bash
-make install
-```
+### Transcription
+- **faster-whisper** backend — 50x real-time on GPU, int8 quantization
+- 3 quality tiers: `draft` (base), `balanced` (turbo), `high_quality` (large-v3)
+- Hallucination detection (confidence scoring + repetition filtering)
+- Markdown, JSON, SRT, VTT output formats
 
-## Usage
+### Speaker Identity
+- Stable `spk_xxxx` cluster IDs that persist across calls
+- Cross-call voice linking — same person in 10 calls gets one identity
+- Confidence bands: confirmed (0.92+), probable (0.80+), candidate (0.60+)
+- Review queue for unknown speakers
+- CLI: `audioscript speakers list`, `label`, `merge`, `summary`
 
-Basic usage with a single file:
+### LLM Analysis (Claude)
+- Auto-generated titles ("Q1 Budget Review" instead of "Recording (215)")
+- 2-3 sentence abstractive summaries
+- Action items with assignee and deadline extraction
+- Key decisions, questions raised, topic tags
+- Meeting classification (business, family, sales-call, etc.)
+- Speaker name extraction from transcript context
+- Cost tracking: `audioscript cost`
 
-```bash
-audioscript --input="path/to/audio.mp3" --output-dir="./transcripts"
-```
+### Sync Engine
+- Watch a directory for new audio files
+- WSL path translation (`C:\Users\...` → `/mnt/c/Users/...`)
+- OneDrive Files On-Demand handling (auto-download trigger)
+- Local staging for fast I/O on slow WSL mounts
+- `audioscript sync --watch` for continuous monitoring
 
-Process multiple files using glob patterns:
+### Output
+- Obsidian-compatible markdown with YAML frontmatter
+- `[[wikilinks]]` to speakers and related transcripts
+- Tags: classification + topics for filtering
+- MiNotes export with plugin registration
 
-```bash
-audioscript --input="path/to/audio/*.mp3" --output-dir="./transcripts"
-```
+## Commands
 
-Generate high-quality transcriptions with summaries:
-
-```bash
-audioscript --input="path/to/audio/*.mp3" --tier="high_quality" --summarize
-```
-
-Force reprocessing of already processed files:
-
-```bash
-audioscript --input="path/to/audio/*.mp3" --force
-```
-
-Try the included demo script:
-
-```bash
-./try_audioscript.py
-```
-
-or
-
-```bash
-make run
-```
-
-## Whisper Models
-
-AudioScript uses OpenAI's Whisper models for transcription, running locally on your machine. The model used depends on the tier:
-
-- `draft` tier: Uses the "base" Whisper model (faster but less accurate)
-- `high_quality` tier: Uses the "large" Whisper model (slower but more accurate)
-
-You can also specify a specific model with the `--model` flag:
-
-```bash
-audioscript --input="path/to/audio.mp3" --model="medium"
-```
-
-Available models: "tiny", "base", "small", "medium", "large", "large-v2", "large-v3"
+| Command | Description |
+|---------|-------------|
+| `audioscript transcribe` | Transcribe audio files |
+| `audioscript sync` | Auto-transcribe from watched directories |
+| `audioscript analyze` | Re-run LLM analysis on existing transcripts (parallel) |
+| `audioscript show` | View a transcript in the terminal |
+| `audioscript search` | Full-text search across all transcripts |
+| `audioscript speakers` | List, label, merge, summarize speaker identities |
+| `audioscript cost` | View cumulative LLM spending |
+| `audioscript check` | Verify dependencies, auth, and GPU |
+| `audioscript init` | Guided first-time setup |
+| `audioscript schema` | Introspect capabilities (for agents) |
 
 ## Configuration
 
-You can create a `.audioscript.yaml` file in your project directory to store default settings:
+Create `.audioscript.yaml` or run `audioscript init`:
 
 ```yaml
-# Default configuration
-output_dir: "./transcripts"
-tier: "draft"
-version: "1.0"
-clean_audio: false
-summarize: false
-force: false
-no_retry: false
-model: "base"  # Optional specific model
+output_dir: "./output"
+tier: "balanced"
+
+# Speaker diarization (requires HF_TOKEN env var)
+# diarize: true
+
+# Sync — auto-transcribe from OneDrive
+# sync:
+#   sources:
+#     - path: "C:\\Users\\you\\OneDrive\\Documents\\Sound Recordings"
+#   output_format: markdown
 ```
 
-Command line arguments will override values from the config file.
+## Environment Variables
 
-## Command Line Options
+| Variable | Purpose |
+|----------|---------|
+| `HF_TOKEN` | HuggingFace token for speaker diarization |
+| `ANTHROPIC_API_KEY` | Claude API key for LLM analysis |
+| `AUDIOSCRIPT_FORMAT` | Default output format (json, table, quiet, yaml) |
+| `AUDIOSCRIPT_TIER` | Default quality tier |
 
-| Option | Description |
-|--------|-------------|
-| `--input`, `-i` | Input audio file or glob pattern |
-| `--output-dir`, `-o` | Directory to save transcription outputs |
-| `--tier`, `-t` | Transcription quality tier (draft or high_quality) |
-| `--version` | Version of the transcription |
-| `--clean-audio` | Clean audio before transcription |
-| `--summarize` | Generate a summary of the transcription |
-| `--force`, `-f` | Force re-processing of already processed files |
-| `--model`, `-m` | Specific Whisper model to use (overrides tier setting) |
-| `--no-retry` | Do not retry failed transcriptions |
-| `--version`, `-v` | Show the version and exit |
+## Requirements
 
-## Output Format
+- Python 3.11+
+- NVIDIA GPU (CUDA) recommended, CPU works but slower
+- faster-whisper, torch, pyannote.audio (for diarization)
 
-Transcriptions are saved as JSON files with the same name as the input audio file in the specified output directory. The JSON format follows Whisper's output format and includes:
+## Architecture
 
-- Full transcription text
-- Segments with timestamps
-- Language detection information
-- Confidence scores
-
-If summarization is enabled, a separate summary file is created with the extension `.summary.txt`.
-
-## Development
-
-### Running Tests
-
-```bash
-pytest
+```
+audioscript/
+├── cli/commands/     14 CLI commands (typer)
+├── config/           Pydantic settings + YAML config
+├── processors/       faster-whisper, pyannote, hallucination detection
+├── speakers/         Identity DB, resolution engine, calendar, enrollment
+├── sync/             Sync engine, WSL paths, file discovery, OneDrive
+├── formatters/       Markdown output (Obsidian-compatible)
+├── exporters/        MiNotes integration
+├── llm/              Claude analysis + cost tracking
+└── utils/            File hashing, validation, logging, metadata
 ```
 
-or
+## License
 
-```bash
-make test
-```
-
-### Structure
-
-- `audioscript/cli/`: Command-line interface
-- `audioscript/config/`: Configuration handling
-- `audioscript/processors/`: Audio processing and transcription
-  - `audio_processor.py`: Main processor that handles the workflow
-  - `whisper_transcriber.py`: Whisper model integration
-- `audioscript/utils/`: Utility functions for file operations, etc.
-
-### Dependencies
-
-The project uses the following key dependencies:
-
-- `typer`: For the command-line interface
-- `openai-whisper`: OpenAI's Whisper model for transcription
-- `torch`: PyTorch for the neural network backend
-- `pyyaml`: For configuration file parsing
-- `rich`: For prettier terminal output
-- `pydantic`: For data validation and settings management
+CC BY-NC 4.0

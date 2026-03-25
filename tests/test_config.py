@@ -136,7 +136,7 @@ def test_audio_script_config_defaults():
     assert config.fp16 is True
     assert config.patience is None
     assert config.length_penalty is None
-    assert config.output_format == "json"
+    assert config.output_format == "markdown"
     assert config.highlight_words is False
     assert config.max_line_width is None
     assert config.max_line_count is None

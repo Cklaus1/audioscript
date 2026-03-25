@@ -306,6 +306,21 @@ def render_markdown(
     if topics:
         parts.append(f"**Topics:** {', '.join(topics)}")
 
+    # Wikilinks — link to speakers and related pages
+    diar = result_dict.get("diarization", {})
+    resolved = diar.get("speakers_resolved", [])
+    if resolved:
+        speaker_links = []
+        for s in resolved:
+            name = s.get("display_name")
+            cluster = s.get("speaker_cluster_id", "")
+            if name:
+                speaker_links.append(f"[[{name}]]")
+            elif cluster:
+                speaker_links.append(f"[[{cluster}]]")
+        if speaker_links:
+            parts.append(f"**Speakers:** {', '.join(speaker_links)}")
+
     # Transcript body
     segments = result_dict.get("segments", [])
     has_speakers = any(seg.get("speaker") for seg in segments)

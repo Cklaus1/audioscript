@@ -261,6 +261,7 @@ class SyncEngine:
         self.console.print(
             f"  Done: {report.transcribed} transcribed, {report.failed} failed"
         )
+        self.console.print(f"  Output: [bold]{output_dir.absolute()}[/]")
 
         # Speaker summary (if diarization was used)
         try:
