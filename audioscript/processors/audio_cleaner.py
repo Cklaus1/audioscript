@@ -24,6 +24,7 @@ def compute_snr(audio: np.ndarray, sr: int) -> float:
     Splits audio into short frames, uses the top 10% of frame energies
     as signal estimate and bottom 10% as noise estimate.
     """
+    audio = audio.astype(np.float32)  # Prevent int16 overflow in squaring
     frame_length = int(0.025 * sr)  # 25ms frames
     hop_length = int(0.010 * sr)    # 10ms hop
 

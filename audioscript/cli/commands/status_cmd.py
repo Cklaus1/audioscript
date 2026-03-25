@@ -29,6 +29,7 @@ def status(
             f"No manifest found at {manifest_path}",
             hint=f"Run 'audioscript transcribe --output-dir {output_dir}' first.",
         )
+        return
 
     try:
         with open(manifest_path, "r") as f:

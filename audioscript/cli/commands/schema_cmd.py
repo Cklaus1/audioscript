@@ -72,5 +72,6 @@ def schema_env(ctx: typer.Context) -> None:
             {"name": "AUDIOSCRIPT_MODEL", "description": "Default Whisper model name", "used_by": ["transcribe", "detect-language"]},
             {"name": "AUDIOSCRIPT_LOG", "description": "Stderr log level (debug, info, warning, error)", "used_by": ["all"]},
             {"name": "AUDIOSCRIPT_LOG_FILE", "description": "Directory for JSON-line log files", "used_by": ["all"]},
+            {"name": "ANTHROPIC_API_KEY", "description": "Anthropic API key for LLM analysis (summary, title, action items)", "used_by": ["transcribe", "sync", "analyze"]},
         ],
     })

@@ -17,12 +17,18 @@ def _ensure_whisper_imports() -> None:
     """Import torch/whisper on first use."""
     global torch, whisper, get_writer
     if torch is None:
-        import torch as _torch
-        import whisper as _whisper
-        from whisper.utils import get_writer as _get_writer
-        torch = _torch
-        whisper = _whisper
-        get_writer = _get_writer
+        try:
+            import torch as _torch
+            import whisper as _whisper
+            from whisper.utils import get_writer as _get_writer
+            torch = _torch
+            whisper = _whisper
+            get_writer = _get_writer
+        except ImportError as e:
+            raise ImportError(
+                f"Whisper backend requires torch and openai-whisper: {e}. "
+                "Use faster-whisper backend instead (default)."
+            ) from e
 
 from audioscript.processors.backend_protocol import (
     TranscriberBackend,

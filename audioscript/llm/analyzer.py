@@ -106,16 +106,32 @@ def analyze_transcript(
         transcript_text, segments, metadata, max_transcript_chars,
     )
 
-    # Call Claude
+    # Call Claude with rate limit retry
     start_time = time.time()
+    max_retries = 3
     try:
         client = anthropic.Anthropic(api_key=api_key)
-        response = client.messages.create(
-            model=model,
-            max_tokens=2000,
-            system=SYSTEM_PROMPT,
-            messages=[{"role": "user", "content": user_message}],
-        )
+        response = None
+        for attempt in range(max_retries):
+            try:
+                response = client.messages.create(
+                    model=model,
+                    max_tokens=2000,
+                    system=SYSTEM_PROMPT,
+                    messages=[{"role": "user", "content": user_message}],
+                )
+                break  # Success
+            except anthropic.RateLimitError:
+                if attempt < max_retries - 1:
+                    wait = 2 ** (attempt + 1)  # 2, 4, 8 seconds
+                    logger.info("Rate limited, retrying in %ds (attempt %d/%d)", wait, attempt + 1, max_retries)
+                    time.sleep(wait)
+                else:
+                    logger.warning("Rate limit exceeded after %d retries", max_retries)
+                    return None
+
+        if response is None:
+            return None
 
         duration = time.time() - start_time
 

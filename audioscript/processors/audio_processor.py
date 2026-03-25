@@ -234,7 +234,7 @@ class AudioProcessor:
                 self.manifest.update_file_status(
                     file_hash, "transcribed",
                     self.settings.tier.value, self.settings.version, new_checkpoint,
-                    flush=False,  # Don't write to disk for intermediate status
+                    flush=True,  # Flush checkpoint — recovery point if crash during enrichment
                 )
 
                 # Convert to dict for JSON output and downstream processing
@@ -268,7 +268,7 @@ class AudioProcessor:
                         pass
 
                 # Embed audio file metadata if requested
-                if self.settings.metadata:
+                if self.settings.metadata or self.settings.diarize:
                     try:
                         result_dict["metadata"] = extract_metadata(file_path, content_hash=file_hash)
                     except Exception as meta_err:
@@ -299,7 +299,7 @@ class AudioProcessor:
                     from audioscript.llm.cost_tracker import CostTracker
                     import os
 
-                    if os.environ.get("ANTHROPIC_API_KEY"):
+                    if self.settings.llm_analysis and os.environ.get("ANTHROPIC_API_KEY"):
                         self.console.print(f"LLM analysis: {file_path.name}")
                         cost_log = output_dir / ".audioscript_llm_costs.jsonl"
                         tracker = CostTracker(cost_log)
@@ -308,6 +308,7 @@ class AudioProcessor:
                             transcript_text=result_dict.get("text", ""),
                             segments=result_dict.get("segments"),
                             metadata=result_dict.get("metadata"),
+                            model=self.settings.llm_model,
                             call_id=file_hash,
                             cost_tracker=tracker,
                         )
@@ -545,11 +546,25 @@ class AudioProcessor:
             except Exception:
                 pass
 
+            # Build speaker-labeled segments for transcript hints (Stage F)
+            # Merge diarization speaker labels onto transcript segments
+            diar_segments = diar_result.get("segments", [])
+            transcript_segs_for_hints = []
+            for seg in (result.get("segments", []) if isinstance(result, dict) else []):
+                # Find which diarization speaker owns this segment's time range
+                seg_mid = (seg.get("start", 0) + seg.get("end", 0)) / 2
+                speaker = ""
+                for ds in diar_segments:
+                    if ds.get("start", 0) <= seg_mid <= ds.get("end", 0):
+                        speaker = ds.get("speaker", "")
+                        break
+                transcript_segs_for_hints.append({**seg, "speaker": speaker})
+
             resolutions = engine.resolve_call(
                 diar_result, call_id, file_path,
                 call_metadata=result.get("metadata") if isinstance(result, dict) else None,
                 calendar_joiner=calendar_joiner,
-                transcript_segments=result.get("segments") if isinstance(result, dict) else None,
+                transcript_segments=transcript_segs_for_hints,
             )
             result = engine.apply_to_transcript(result, resolutions)
 

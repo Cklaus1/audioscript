@@ -2,15 +2,31 @@
 
 from __future__ import annotations
 
-import fcntl
 import hashlib
 import json
 import logging
 import os
+import sys
 import tempfile
 import time
 from pathlib import Path
 from typing import Any
+
+# Cross-platform file locking
+if sys.platform != "win32":
+    import fcntl
+
+    def _lock_file(fd: int) -> None:
+        fcntl.flock(fd, fcntl.LOCK_EX)
+
+    def _unlock_file(fd: int) -> None:
+        fcntl.flock(fd, fcntl.LOCK_UN)
+else:
+    def _lock_file(fd: int) -> None:
+        pass  # Atomic os.replace still provides crash safety on Windows
+
+    def _unlock_file(fd: int) -> None:
+        pass
 
 logger = logging.getLogger(__name__)
 
@@ -90,7 +106,7 @@ class ProcessingManifest:
         lock_path = self.manifest_path.with_suffix(".lock")
         lock_fd = os.open(str(lock_path), os.O_CREAT | os.O_RDWR)
         try:
-            fcntl.flock(lock_fd, fcntl.LOCK_EX)
+            _lock_file(lock_fd)
 
             # Reload from disk to get any concurrent updates before merging
             if self.manifest_path.exists():
@@ -120,7 +136,7 @@ class ProcessingManifest:
                     pass
                 raise
         finally:
-            fcntl.flock(lock_fd, fcntl.LOCK_UN)
+            _unlock_file(lock_fd)
             os.close(lock_fd)
 
     def is_processed(self, file_hash: str, tier: str, version: str) -> bool:

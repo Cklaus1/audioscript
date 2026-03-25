@@ -114,6 +114,10 @@ class AudioScriptConfig(BaseModel):
     speaker_match_threshold: float = Field(default=0.70, ge=0.0, le=1.0)
     speaker_auto_confirm_threshold: float = Field(default=0.92, ge=0.0, le=1.0)
 
+    # LLM analysis options
+    llm_analysis: bool = Field(default=True)
+    llm_model: str = Field(default="claude-sonnet-4-6")
+
     @field_validator("output_format")
     @classmethod
     def validate_output_format(cls, v: str) -> str:

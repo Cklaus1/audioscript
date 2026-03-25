@@ -9,10 +9,10 @@ Storage: JSON file with atomic writes (same pattern as ProcessingManifest).
 
 from __future__ import annotations
 
-import fcntl
 import json
 import logging
 import os
+import sys
 import tempfile
 from pathlib import Path
 from typing import Any
@@ -29,6 +29,19 @@ from audioscript.speakers.models import (
 from audioscript.utils.math_utils import batch_cosine_best_match, cosine_similarity as _cosine_similarity
 
 logger = logging.getLogger(__name__)
+
+# Cross-platform file locking
+if sys.platform != "win32":
+    import fcntl
+    def _lock_file(fd: int) -> None:
+        fcntl.flock(fd, fcntl.LOCK_EX)
+    def _unlock_file(fd: int) -> None:
+        fcntl.flock(fd, fcntl.LOCK_UN)
+else:
+    def _lock_file(fd: int) -> None:
+        pass
+    def _unlock_file(fd: int) -> None:
+        pass
 
 
 class SpeakerIdentityDB:
@@ -68,7 +81,7 @@ class SpeakerIdentityDB:
         lock_path = self.db_path.with_suffix(".lock")
         lock_fd = os.open(str(lock_path), os.O_CREAT | os.O_RDWR)
         try:
-            fcntl.flock(lock_fd, fcntl.LOCK_EX)
+            _lock_file(lock_fd)
 
             fd, tmp_path = tempfile.mkstemp(
                 dir=self.db_path.parent,
@@ -86,7 +99,7 @@ class SpeakerIdentityDB:
                     pass
                 raise
         finally:
-            fcntl.flock(lock_fd, fcntl.LOCK_UN)
+            _unlock_file(lock_fd)
             os.close(lock_fd)
 
     # --- Core Matching ---

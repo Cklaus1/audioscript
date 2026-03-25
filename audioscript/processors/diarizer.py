@@ -21,12 +21,18 @@ def _ensure_diarizer_imports() -> None:
     """Import numpy/torch/torchaudio on first use."""
     global np, torch, torchaudio
     if np is None:
-        import numpy as _np
-        import torch as _torch
-        import torchaudio as _ta
-        np = _np
-        torch = _torch
-        torchaudio = _ta
+        try:
+            import numpy as _np
+            import torch as _torch
+            import torchaudio as _ta
+            np = _np
+            torch = _torch
+            torchaudio = _ta
+        except ImportError as e:
+            raise ImportError(
+                f"Diarization requires numpy, torch, and torchaudio: {e}. "
+                "Install with: pip install audioscript[diarization]"
+            ) from e
 
 from audioscript.config.settings import DEFAULT_DIARIZATION_MODEL, DEFAULT_VAD_MODEL
 
