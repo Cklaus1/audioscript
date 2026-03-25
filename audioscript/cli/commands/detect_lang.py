@@ -55,15 +55,15 @@ def detect_language(
         return
 
     try:
-        from audioscript.processors.whisper_transcriber import WhisperTranscriber
+        from audioscript.processors.faster_whisper_transcriber import FasterWhisperTranscriber
 
-        transcriber = WhisperTranscriber(
+        transcriber = FasterWhisperTranscriber(
             model_name=model, tier=tier or "draft",
         )
     except Exception as e:
         emit_error(
             cli, ExitCode.TRANSCRIPTION_ERROR, "model", str(e),
-            hint="Ensure whisper is installed and the model name is valid. Use 'audioscript schema models' to list available models.",
+            hint="Ensure faster-whisper is installed and the model name is valid. Use 'audioscript schema models' to list available models.",
         )
         return
 

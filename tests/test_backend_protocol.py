@@ -2,8 +2,6 @@
 
 from unittest.mock import MagicMock, patch
 
-import pytest
-
 from audioscript.processors.backend_protocol import (
     TranscriptionResult,
     TranscriptionSegment,
@@ -41,55 +39,29 @@ def test_result_to_dict_structure():
     """to_dict() returns correct top-level structure."""
     seg = TranscriptionSegment(id=0, start=0.0, end=1.0, text="Hello")
     result = TranscriptionResult(
-        text="Hello", language="en", segments=[seg], backend="whisper",
+        text="Hello", language="en", segments=[seg], backend="faster-whisper",
     )
     d = result.to_dict()
     assert d["text"] == "Hello"
     assert d["language"] == "en"
-    assert d["backend"] == "whisper"
+    assert d["backend"] == "faster-whisper"
     assert len(d["segments"]) == 1
     assert "raw" not in d
 
 
 # --- create_transcriber factory ---
 
-def test_create_transcriber_whisper_backend():
-    """create_transcriber with backend='whisper' returns WhisperTranscriber."""
+def test_create_transcriber_returns_faster_whisper():
+    """create_transcriber returns FasterWhisperTranscriber."""
     mock_settings = MagicMock()
-    mock_settings.backend = "whisper"
-    mock_settings.model = "base"
+    mock_settings.backend = "faster-whisper"
+    mock_settings.model = None
     mock_settings.tier.value = "draft"
     mock_settings.download_root = None
 
-    with patch("audioscript.processors.whisper_transcriber.whisper") as mock_whisper:
-        mock_whisper.available_models.return_value = [
-            "tiny", "base", "small", "medium", "large", "turbo",
-        ]
+    with patch("audioscript.processors.faster_whisper_transcriber.FasterWhisperTranscriber.__init__", return_value=None):
         from audioscript.processors import create_transcriber
         transcriber = create_transcriber(mock_settings)
 
-    from audioscript.processors.whisper_transcriber import WhisperTranscriber
-    assert isinstance(transcriber, WhisperTranscriber)
-
-
-def test_create_transcriber_faster_whisper_fallback():
-    """create_transcriber falls back to WhisperTranscriber when faster_whisper not installed."""
-    mock_settings = MagicMock()
-    mock_settings.backend = "faster-whisper"
-    mock_settings.model = "base"
-    mock_settings.tier.value = "draft"
-    mock_settings.download_root = None
-
-    with patch(
-        "audioscript.processors.faster_whisper_transcriber.FasterWhisperTranscriber",
-        side_effect=ImportError("No module named 'faster_whisper'"),
-    ):
-        with patch("audioscript.processors.whisper_transcriber.whisper") as mock_whisper:
-            mock_whisper.available_models.return_value = [
-                "tiny", "base", "small", "medium", "large", "turbo",
-            ]
-            from audioscript.processors import create_transcriber
-            transcriber = create_transcriber(mock_settings)
-
-    from audioscript.processors.whisper_transcriber import WhisperTranscriber
-    assert isinstance(transcriber, WhisperTranscriber)
+    from audioscript.processors.faster_whisper_transcriber import FasterWhisperTranscriber
+    assert isinstance(transcriber, FasterWhisperTranscriber)

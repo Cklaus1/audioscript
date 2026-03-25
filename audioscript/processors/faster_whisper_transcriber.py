@@ -27,7 +27,7 @@ class FasterWhisperTranscriber(TranscriberBackend):
 
     TIER_TO_MODEL = {
         "draft": "base",
-        "balanced": "medium",
+        "balanced": "turbo",
         "high_quality": "large-v3",
     }
 

@@ -163,34 +163,8 @@ class AudioProcessor:
                         )
 
                 # Run standalone VAD if requested (independent of --diarize)
-                vad_clips: list[float] | None = None
-                use_builtin_vad = False
-
-                if self.settings.vad:
-                    if transcriber.backend_name == "faster-whisper":
-                        # Use faster-whisper's built-in Silero VAD
-                        use_builtin_vad = True
-                        self.console.print(f"VAD: using built-in Silero VAD")
-                    else:
-                        # Use pyannote VAD for vanilla Whisper
-                        diarizer = self._get_diarizer()
-                        self.console.print(f"Running VAD: {file_path.name}")
-                        vad_result = diarizer.detect_speech(audio_to_process)
-                        self.console.print(
-                            f"Speech: {vad_result['speech_percentage']}% "
-                            f"({vad_result['total_speech_duration']}s / {vad_result['total_duration']}s)"
-                        )
-                        # Save VAD timeline
-                        vad_path = get_output_path(file_path, output_dir, "vad.json")
-                        vad_path.parent.mkdir(parents=True, exist_ok=True)
-                        with open(vad_path, "w") as f:
-                            json.dump(vad_result, f, indent=2)
-
-                        # Convert VAD speech regions to clip_timestamps
-                        if vad_result["speech_segments"] and self.settings.clip_timestamps is None:
-                            vad_clips = []
-                            for seg in vad_result["speech_segments"]:
-                                vad_clips.extend([seg["start"], seg["end"]])
+                # Uses faster-whisper's built-in Silero VAD
+                use_builtin_vad = self.settings.vad
 
                 # Diarization requires word_timestamps
                 word_timestamps = self.settings.word_timestamps
@@ -206,11 +180,6 @@ class AudioProcessor:
                     f"attempt {attempt}/{max_attempts})"
                 )
 
-                # Determine clip_timestamps
-                clip_ts = self.settings.parse_clip_timestamps()
-                if vad_clips is not None:
-                    clip_ts = vad_clips
-
                 # Build transcription kwargs
                 transcribe_kwargs: dict[str, Any] = {
                     "language": self.settings.language,
@@ -222,10 +191,10 @@ class AudioProcessor:
                     "checkpoint": checkpoint,
                     "suppress_tokens": self.settings.suppress_tokens,
                     "suppress_blank": self.settings.suppress_blank,
-                    "clip_timestamps": clip_ts,
+                    "clip_timestamps": self.settings.parse_clip_timestamps(),
+                    "vad_filter": use_builtin_vad,
                 }
 
-                # Backend-specific kwargs
                 if self.settings.hallucination_silence_threshold is not None:
                     transcribe_kwargs["hallucination_silence_threshold"] = (
                         self.settings.hallucination_silence_threshold
@@ -234,16 +203,6 @@ class AudioProcessor:
                     transcribe_kwargs["patience"] = self.settings.patience
                 if self.settings.length_penalty is not None:
                     transcribe_kwargs["length_penalty"] = self.settings.length_penalty
-
-                # Whisper-specific kwargs
-                if transcriber.backend_name == "whisper":
-                    transcribe_kwargs["verbose"] = True
-                    transcribe_kwargs["fp16"] = self.settings.fp16
-                    transcribe_kwargs["carry_initial_prompt"] = self.settings.carry_initial_prompt
-
-                # Faster-whisper VAD
-                if use_builtin_vad:
-                    transcribe_kwargs["vad_filter"] = True
 
                 result = transcriber.transcribe(audio_to_process, **transcribe_kwargs)
 
@@ -314,20 +273,6 @@ class AudioProcessor:
                 fmt = self.settings.output_format
                 if fmt == "markdown":
                     self._save_markdown(result_dict, file_path, output_dir)
-                elif fmt not in ("json",):
-                    # Use Whisper's built-in writers for srt/vtt/txt/tsv
-                    from audioscript.processors.whisper_transcriber import WhisperTranscriber
-                    if isinstance(transcriber, WhisperTranscriber):
-                        writer_options = {
-                            "highlight_words": self.settings.highlight_words,
-                            "max_line_width": self.settings.max_line_width,
-                            "max_line_count": self.settings.max_line_count,
-                            "max_words_per_line": self.settings.max_words_per_line,
-                        }
-                        transcriber.save_formatted_output(
-                            result_dict, audio_to_process, output_dir,
-                            output_format=fmt, options=writer_options,
-                        )
 
                 # Generate summary if requested
                 summary_text = None

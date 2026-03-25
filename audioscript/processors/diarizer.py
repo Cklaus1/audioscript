@@ -199,8 +199,18 @@ class SpeakerDiarizer:
         logger.info("Diarization pipeline loaded successfully.")
 
     def _load_audio(self, audio_path: Union[str, Path]) -> Dict[str, Any]:
-        """Load audio via torchaudio (avoids torchcodec issues)."""
-        waveform, sample_rate = torchaudio.load(str(audio_path))
+        """Load audio as a waveform tensor for pyannote.
+
+        Uses librosa+soundfile as fallback when torchaudio/torchcodec fails
+        (common with torchaudio 2.10+ and missing FFmpeg libs).
+        """
+        try:
+            waveform, sample_rate = torchaudio.load(str(audio_path))
+        except (RuntimeError, OSError, ImportError):
+            # Fallback: load via librosa, convert to torch tensor
+            import librosa
+            audio_np, sample_rate = librosa.load(str(audio_path), sr=16000, mono=True)
+            waveform = torch.from_numpy(audio_np).unsqueeze(0)  # (1, samples)
         return {"waveform": waveform, "sample_rate": sample_rate}
 
     def diarize(

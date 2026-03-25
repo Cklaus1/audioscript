@@ -41,9 +41,23 @@ def format_frontmatter(
     result = result or {}
     metadata = metadata or {}
     audio_meta = metadata.get("audio", {})
+    file_meta = metadata.get("file", {})
+    format_tags = audio_meta.get("format_tags", {})
 
     title = f"Transcript: {audio_path.stem}"
+
+    # Use recording creation_time from audio metadata, fall back to file mtime, then today
     date = datetime.now().strftime("%Y-%m-%d")
+    if format_tags.get("creation_time"):
+        try:
+            date = format_tags["creation_time"][:10]  # "2025-06-05T04:31:43..." → "2025-06-05"
+        except (IndexError, TypeError):
+            pass
+    elif file_meta.get("modified"):
+        try:
+            date = str(file_meta["modified"])[:10]
+        except (IndexError, TypeError):
+            pass
 
     lines = ["---"]
     lines.append(f"title: \"{title}\"")
@@ -71,7 +85,9 @@ def format_frontmatter(
         speakers_list = ", ".join(diar["speakers"])
         lines.append(f"speakers: [{speakers_list}]")
 
-    lines.append("tags: [transcript, audioscript]")
+    # Tags
+    tags = ["transcript", "audioscript"]
+    lines.append(f"tags: [{', '.join(tags)}]")
     lines.append("---")
 
     return "\n".join(lines)

@@ -1,8 +1,10 @@
 """Check command — verify dependencies, auth, and GPU status."""
 
+from __future__ import annotations
+
 import os
 import sys
-from typing import Any, Dict, List
+from typing import Any
 
 import typer
 
@@ -17,7 +19,7 @@ def check(ctx: typer.Context) -> None:
     """Check system dependencies, authentication, and hardware."""
     cli: CLIContext = ctx.obj
 
-    result: Dict[str, Any] = {
+    result: dict[str, Any] = {
         "python": sys.version.split()[0],
         "dependencies": _check_dependencies(),
         "auth": _check_auth(),
@@ -28,24 +30,27 @@ def check(ctx: typer.Context) -> None:
     # Overall readiness
     deps = result["dependencies"]
     result["ready"] = {
-        "transcribe": deps["whisper"]["installed"],
+        "transcribe": deps["faster_whisper"]["installed"],
         "diarize": deps["pyannote"]["installed"] and result["auth"]["hf_token_set"],
-        "vad": deps["pyannote"]["installed"] and result["auth"]["hf_token_set"],
+        "vad": deps["faster_whisper"]["installed"],  # Built-in Silero VAD
     }
 
     emit(cli, "check", result)
 
 
-def _check_dependencies() -> Dict[str, Any]:
+def _check_dependencies() -> dict[str, Any]:
     """Check if required packages are installed."""
-    deps = {}
+    deps: dict[str, Any] = {}
 
-    # Whisper
+    # faster-whisper
     try:
-        import whisper
-        deps["whisper"] = {"installed": True, "version": getattr(whisper, "__version__", "unknown")}
+        import faster_whisper
+        deps["faster_whisper"] = {
+            "installed": True,
+            "version": getattr(faster_whisper, "__version__", "unknown"),
+        }
     except ImportError:
-        deps["whisper"] = {"installed": False}
+        deps["faster_whisper"] = {"installed": False}
 
     # PyTorch
     try:
@@ -57,7 +62,10 @@ def _check_dependencies() -> Dict[str, Any]:
     # pyannote.audio
     try:
         import pyannote.audio
-        deps["pyannote"] = {"installed": True, "version": getattr(pyannote.audio, "__version__", "unknown")}
+        deps["pyannote"] = {
+            "installed": True,
+            "version": getattr(pyannote.audio, "__version__", "unknown"),
+        }
     except ImportError:
         deps["pyannote"] = {"installed": False}
 
@@ -78,7 +86,7 @@ def _check_dependencies() -> Dict[str, Any]:
     return deps
 
 
-def _check_auth() -> Dict[str, Any]:
+def _check_auth() -> dict[str, Any]:
     """Check authentication status."""
     hf_token = os.environ.get("HF_TOKEN", "")
     return {
@@ -87,9 +95,9 @@ def _check_auth() -> Dict[str, Any]:
     }
 
 
-def _check_hardware() -> Dict[str, Any]:
+def _check_hardware() -> dict[str, Any]:
     """Check hardware capabilities."""
-    hw: Dict[str, Any] = {"device": "cpu"}
+    hw: dict[str, Any] = {"device": "cpu"}
 
     try:
         import torch
@@ -97,7 +105,9 @@ def _check_hardware() -> Dict[str, Any]:
             hw["device"] = "cuda"
             hw["cuda_version"] = torch.version.cuda or "unknown"
             hw["gpu_name"] = torch.cuda.get_device_name(0)
-            hw["gpu_memory_mb"] = round(torch.cuda.get_device_properties(0).total_memory / 1024 / 1024)
+            hw["gpu_memory_mb"] = round(
+                torch.cuda.get_device_properties(0).total_memory / 1024 / 1024
+            )
         elif hasattr(torch.backends, "mps") and torch.backends.mps.is_available():
             hw["device"] = "mps"
     except ImportError:
@@ -106,22 +116,21 @@ def _check_hardware() -> Dict[str, Any]:
     return hw
 
 
-def _check_cached_models() -> List[str]:
-    """List locally cached Whisper models."""
+def _check_cached_models() -> list[str]:
+    """List locally cached faster-whisper models."""
     try:
-        import whisper
         from pathlib import Path
 
-        # Whisper caches models in ~/.cache/whisper by default
-        cache_dir = os.path.join(os.path.expanduser("~"), ".cache", "whisper")
-        if not os.path.isdir(cache_dir):
+        # faster-whisper caches via huggingface_hub
+        cache_dir = Path.home() / ".cache" / "huggingface" / "hub"
+        if not cache_dir.is_dir():
             return []
 
         cached = []
-        for f in os.listdir(cache_dir):
-            if f.endswith(".pt"):
-                # Extract model name from filename
-                name = f.replace(".pt", "")
+        for d in cache_dir.iterdir():
+            if d.is_dir() and "whisper" in d.name.lower():
+                # Extract model name from directory name
+                name = d.name.replace("models--", "").replace("--", "/")
                 cached.append(name)
         return sorted(cached)
     except Exception:

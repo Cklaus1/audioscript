@@ -21,6 +21,7 @@ from audioscript.cli.commands.vad_cmd import vad_app
 from audioscript.cli.commands.diarize_cmd import diarize_app
 from audioscript.cli.commands.status_cmd import status_app
 from audioscript.cli.commands.check_cmd import check_app
+from audioscript.cli.commands.sync_cmd import sync_app
 
 from rich.console import Console
 
@@ -41,6 +42,7 @@ app.add_typer(vad_app, name="vad", help="Voice Activity Detection.")
 app.add_typer(diarize_app, name="diarize", help="Standalone speaker diarization.")
 app.add_typer(status_app, name="status", help="Query processing status from manifest.")
 app.add_typer(check_app, name="check", help="Check dependencies, auth, and GPU status.")
+app.add_typer(sync_app, name="sync", help="Auto-transcribe new audio files from watched directories.")
 
 
 def version_callback(value: bool) -> None:

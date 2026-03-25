@@ -20,7 +20,7 @@ def _make_result(text: str = "hello world") -> TranscriptionResult:
         segments=[
             TranscriptionSegment(id=0, start=0.0, end=2.0, text=text),
         ],
-        backend="whisper",
+        backend="faster-whisper",
     )
 
 
@@ -35,7 +35,7 @@ def _make_settings(**overrides) -> AudioScriptConfig:
         "no_retry": True,
         "max_retries": 3,
         "output_dir": "./output",
-        "backend": "whisper",
+        "backend": "faster-whisper",
         "hallucination_filter": "off",
     }
     defaults.update(overrides)
@@ -66,7 +66,7 @@ def mock_transcriber():
     """Create a mock TranscriberBackend that returns valid results."""
     transcriber = MagicMock()
     transcriber.transcribe.return_value = _make_result()
-    transcriber.backend_name = "whisper"
+    transcriber.backend_name = "faster-whisper"
     transcriber.supports_confidence = False
     return transcriber
 
@@ -276,24 +276,18 @@ def test_beam_size_passed(temp_audio_file, mock_manifest, mock_transcriber):
     assert call_kwargs.kwargs.get("beam_size") == 10
 
 
-def test_output_format_srt(temp_audio_file, mock_manifest, mock_transcriber):
-    """Test that non-JSON output format triggers save_formatted_output."""
-    # For SRT output, the transcriber must be a WhisperTranscriber
-    from audioscript.processors.whisper_transcriber import WhisperTranscriber
-    mock_transcriber.__class__ = WhisperTranscriber
-    mock_transcriber.save_formatted_output = MagicMock()
-
-    settings = _make_settings(output_format="srt", word_timestamps=True)
+def test_output_format_markdown(temp_audio_file, mock_manifest, mock_transcriber):
+    """Test that markdown output format triggers _save_markdown."""
+    settings = _make_settings(output_format="markdown")
     processor = AudioProcessor(settings, mock_manifest)
     processor._transcriber = mock_transcriber
 
     with patch("pathlib.Path.mkdir"), \
-         patch("audioscript.processors.audio_processor._save_results"):
+         patch("audioscript.processors.audio_processor._save_results"), \
+         patch.object(processor, "_save_markdown") as mock_md:
         processor.process_file(temp_audio_file)
 
-    mock_transcriber.save_formatted_output.assert_called_once()
-    fmt_call = mock_transcriber.save_formatted_output.call_args
-    assert fmt_call.kwargs.get("output_format") == "srt"
+    mock_md.assert_called_once()
 
 
 def test_language_passed(temp_audio_file, mock_manifest, mock_transcriber):

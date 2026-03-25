@@ -4,14 +4,10 @@ import typer
 
 from audioscript.cli.output import CLIContext, emit
 
-try:
-    import whisper as _whisper
-    _AVAILABLE_MODELS = _whisper.available_models()
-except Exception:
-    _AVAILABLE_MODELS = [
-        "tiny", "tiny.en", "base", "base.en", "small", "small.en",
-        "medium", "medium.en", "large-v1", "large-v2", "large-v3", "turbo",
-    ]
+_AVAILABLE_MODELS = [
+    "tiny", "tiny.en", "base", "base.en", "small", "small.en",
+    "medium", "medium.en", "large-v1", "large-v2", "large-v3", "turbo",
+]
 
 schema_app = typer.Typer(name="schema", help="Introspect AudioScript capabilities.")
 
@@ -48,7 +44,7 @@ def schema_formats(ctx: typer.Context) -> None:
     """List available output formats."""
     cli: CLIContext = ctx.obj
     emit(cli, "schema.formats", {
-        "output_formats": ["json", "txt", "vtt", "srt", "tsv", "all"],
+        "output_formats": ["json", "markdown", "txt", "vtt", "srt", "tsv", "all"],
         "cli_formats": ["json", "table", "quiet", "yaml"],
     })
 

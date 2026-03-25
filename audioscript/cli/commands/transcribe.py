@@ -152,8 +152,6 @@ def transcribe(
     download_root: Optional[str] = typer.Option(None, "--download-root", help="Model cache directory"),
     # --- Metadata ---
     metadata: Optional[bool] = typer.Option(None, "--metadata", help="Extract and embed audio file metadata (date, device, author, codec, etc.)"),
-    # --- Backend ---
-    backend: Optional[str] = typer.Option(None, "--backend", help="Transcription backend: faster-whisper, whisper"),
     # --- Audio cleaning ---
     clean_level: Optional[str] = typer.Option(None, "--clean-level", help="Noise reduction level: light, moderate, aggressive"),
     # --- Hallucination detection ---
@@ -265,7 +263,7 @@ def transcribe(
         "max_line_width": max_line_width, "max_line_count": max_line_count,
         "max_words_per_line": max_words_per_line, "download_root": download_root,
         "metadata": metadata,
-        "backend": backend, "clean_level": clean_level,
+        "clean_level": clean_level,
         "min_confidence": min_confidence, "hallucination_filter": hallucination_filter,
         "retry_strategy": retry_strategy,
         "export": export, "minotes_sync_dir": minotes_sync_dir,

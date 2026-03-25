@@ -14,7 +14,7 @@ from pydantic import BaseModel, Field, field_validator, model_validator
 logger = logging.getLogger(__name__)
 
 VALID_OUTPUT_FORMATS = {"json", "txt", "vtt", "srt", "tsv", "all", "markdown"}
-VALID_BACKENDS = {"faster-whisper", "whisper"}
+VALID_BACKENDS = {"faster-whisper"}
 VALID_CLEAN_LEVELS = {"light", "moderate", "aggressive"}
 VALID_HALLUCINATION_FILTERS = {"auto", "flag", "off"}
 VALID_RETRY_STRATEGIES = {"smart", "always", "never"}
@@ -200,6 +200,71 @@ class AudioScriptConfig(BaseModel):
         if len(parts) == 1 and parts[0] == 0.0:
             return "0"
         return parts
+
+
+# --- Sync configuration models ---
+
+
+class SyncSourceConfig(BaseModel):
+    """Per-source directory overrides for sync."""
+
+    path: str
+    tier: TranscriptionTier | None = None
+    model: str | None = None
+    diarize: bool | None = None
+    export: str | None = None
+    output_format: str | None = None
+    summarize: bool | None = None
+
+
+class SyncOneDriveConfig(BaseModel):
+    """OneDrive Files On-Demand handling config."""
+
+    auto_download: bool = Field(default=True)
+    download_timeout: int = Field(default=300)
+    download_poll_interval: int = Field(default=5)
+    staging_dir: str | None = Field(default=None)
+    cleanup_staging: bool = Field(default=True)
+
+
+class SyncMiNotesConfig(BaseModel):
+    """MiNotes-specific sync settings."""
+
+    enabled: bool = Field(default=False)
+    folder: str = Field(default="Transcripts")
+    journal: bool = Field(default=True)
+
+
+class SyncConfig(BaseModel):
+    """Configuration for the audioscript sync command."""
+
+    sources: list[SyncSourceConfig] = Field(default_factory=list)
+    extensions: list[str] = Field(
+        default_factory=lambda: ["m4a", "mp3", "wav", "flac", "ogg", "opus", "webm", "mp4", "wma", "aac"]
+    )
+    recursive: bool = Field(default=True)
+    ignore_patterns: list[str] = Field(default_factory=lambda: ["*.tmp", ".*"])
+    poll_interval: int = Field(default=300)
+    batch_size: int = Field(default=10)
+    delay_between: float = Field(default=2.0)
+    skip_older_than: int | None = Field(default=None)
+    min_file_size: int = Field(default=1024)
+    max_file_size: int | None = Field(default=None)
+    output_dir: str = Field(default="./transcripts/sync")
+    output_format: str = Field(default="markdown")
+    onedrive: SyncOneDriveConfig = Field(default_factory=SyncOneDriveConfig)
+    minotes: SyncMiNotesConfig = Field(default_factory=SyncMiNotesConfig)
+
+
+def load_sync_config(config_path: Path | None = None) -> SyncConfig:
+    """Load sync configuration from .audioscript.yaml."""
+    if config_path is None:
+        config_path = Path(".audioscript.yaml")
+    file_config = load_yaml_config(config_path)
+    sync_data = file_config.get("sync", {})
+    if not sync_data:
+        return SyncConfig()
+    return SyncConfig(**sync_data)
 
 
 def load_yaml_config(config_path: Path) -> dict[str, Any]:

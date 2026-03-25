@@ -30,7 +30,7 @@ def test_check_dependencies_structure():
     data = json.loads(result.stdout)
     deps = data["data"]["dependencies"]
     # All deps should have installed field
-    for name in ["whisper", "torch", "pyannote", "pyyaml"]:
+    for name in ["faster_whisper", "torch", "pyannote", "pyyaml"]:
         assert name in deps
         assert "installed" in deps[name]
 
