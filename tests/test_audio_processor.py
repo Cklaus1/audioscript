@@ -123,7 +123,7 @@ def test_transcription_saves_results(temp_audio_file, mock_manifest, mock_transc
 
     assert result is True
     mock_transcriber.transcribe.assert_called_once()
-    mock_save.assert_called_once()
+    assert mock_save.call_count >= 1  # Called at least once (may be called twice with LLM enrichment)
 
 
 def test_clean_audio_flag(temp_audio_file, mock_manifest, mock_transcriber):

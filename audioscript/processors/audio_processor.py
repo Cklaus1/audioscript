@@ -290,12 +290,7 @@ class AudioProcessor:
                         )
                         logger.warning("Diarization failed: %s", diar_err, exc_info=True)
 
-                # Save additional output formats if requested
-                fmt = self.settings.output_format
-                if fmt == "markdown":
-                    self._save_markdown(result_dict, file_path, output_dir)
-
-                # LLM analysis (if API key available)
+                # LLM analysis (if API key available) — runs BEFORE markdown generation
                 llm_analysis = None
                 try:
                     from audioscript.llm.analyzer import analyze_transcript, apply_llm_results
@@ -360,6 +355,14 @@ class AudioProcessor:
                     with open(summary_path, "w", encoding="utf-8") as f:
                         f.write(summary_text)
 
+                # Re-save JSON with all enrichment (LLM, hallucination, metadata)
+                _save_results(result_dict, transcription_path)
+
+                # Save markdown AFTER all enrichment (LLM title, summary, actions, topics)
+                fmt = self.settings.output_format
+                if fmt == "markdown":
+                    self._save_markdown(result_dict, file_path, output_dir, summary=summary_text)
+
                 # Export to MiNotes if requested
                 if self.settings.export == "minotes":
                     self._export_minotes(result_dict, file_path, summary_text)
@@ -397,14 +400,11 @@ class AudioProcessor:
 
     def _save_markdown(
         self, result_dict: dict[str, Any], file_path: Path, output_dir: Path,
+        summary: str | None = None,
     ) -> None:
         """Save transcription as Obsidian-compatible markdown."""
         try:
             from audioscript.formatters.markdown_formatter import render_markdown
-
-            summary = None
-            if self.settings.summarize:
-                summary = _generate_summary(result_dict)
 
             md_content = render_markdown(
                 result_dict, file_path,
