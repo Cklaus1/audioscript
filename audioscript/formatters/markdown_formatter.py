@@ -97,8 +97,28 @@ def format_frontmatter(
         speakers_list = ", ".join(diar["speakers"])
         lines.append(f"speakers: [{speakers_list}]")
 
-    # Tags
+    # LLM-enriched fields
+    llm = result.get("llm_analysis", {})
+    if llm.get("title"):
+        # Override generic title with LLM title
+        lines[1] = f"title: \"{llm['title']}\""
+    if llm.get("classification"):
+        lines.append(f"classification: {llm['classification']}")
+    if llm.get("topics"):
+        lines.append(f"topics: [{', '.join(llm['topics'])}]")
+    action_count = len(llm.get("action_items", []))
+    if action_count:
+        lines.append(f"action_items: {action_count}")
+    decision_count = len(llm.get("key_decisions", []))
+    if decision_count:
+        lines.append(f"decisions: {decision_count}")
+
+    # Tags (union of base tags + classification + topics)
     tags = ["transcript", "audioscript"]
+    if llm.get("classification"):
+        tags.append(llm["classification"])
+    for topic in llm.get("topics", [])[:5]:
+        tags.append(topic.lower().replace(" ", "-"))
     lines.append(f"tags: [{', '.join(tags)}]")
     lines.append("---")
 
@@ -224,12 +244,19 @@ def render_markdown(
     - Speaker-labeled transcript
     """
     parts: list[str] = []
+    llm = result_dict.get("llm_analysis", {})
 
-    # Frontmatter
+    # Frontmatter (enriched with LLM data)
     parts.append(format_frontmatter(audio_path, metadata, result_dict))
 
-    # Title
-    parts.append(f"# Transcript: {audio_path.stem}")
+    # Title — use LLM title if available, otherwise filename
+    title = llm.get("title") or result_dict.get("title") or f"Transcript: {audio_path.stem}"
+    parts.append(f"# {title}")
+
+    # Classification
+    classification = llm.get("classification") or result_dict.get("classification")
+    if classification:
+        parts.append(f"**Type:** {classification}")
 
     # Metadata table
     meta_table = format_metadata_table(audio_path, metadata, result_dict)
@@ -237,8 +264,47 @@ def render_markdown(
         parts.append(meta_table)
 
     # Summary
-    if summary:
-        parts.append(format_summary(summary))
+    llm_summary = llm.get("summary")
+    effective_summary = llm_summary or summary
+    if effective_summary:
+        parts.append(format_summary(effective_summary))
+
+    # Action Items (from LLM)
+    action_items = llm.get("action_items") or result_dict.get("action_items", [])
+    if action_items:
+        lines = ["## Action Items", ""]
+        for item in action_items:
+            text = item.get("text", "") if isinstance(item, dict) else str(item)
+            assignee = item.get("assignee", "") if isinstance(item, dict) else ""
+            deadline = item.get("deadline", "") if isinstance(item, dict) else ""
+            suffix = ""
+            if assignee:
+                suffix += f" — {assignee}"
+            if deadline:
+                suffix += f" (by {deadline})"
+            lines.append(f"- [ ] {text}{suffix}")
+        parts.append("\n".join(lines))
+
+    # Key Decisions (from LLM)
+    decisions = llm.get("key_decisions") or result_dict.get("key_decisions", [])
+    if decisions:
+        lines = ["## Key Decisions", ""]
+        for d in decisions:
+            lines.append(f"- {d}")
+        parts.append("\n".join(lines))
+
+    # Questions Raised (from LLM)
+    questions = llm.get("questions_raised") or result_dict.get("questions_raised", [])
+    if questions:
+        lines = ["## Questions Raised", ""]
+        for q in questions:
+            lines.append(f"- {q}")
+        parts.append("\n".join(lines))
+
+    # Topics (from LLM)
+    topics = llm.get("topics") or result_dict.get("topics", [])
+    if topics:
+        parts.append(f"**Topics:** {', '.join(topics)}")
 
     # Transcript body
     segments = result_dict.get("segments", [])

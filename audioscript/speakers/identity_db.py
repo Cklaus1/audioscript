@@ -172,16 +172,25 @@ class SpeakerIdentityDB:
         embedding: list[float],
         call_id: str,
         speaking_seconds: float = 0.0,
+        status: str | None = None,
     ) -> None:
         """Update an existing cluster with a new occurrence.
 
         Incremental centroid averaging + metadata update.
+        Status only upgrades (unknown→candidate→probable→confirmed), never downgrades.
         """
         identity = self.data["identities"].get(cluster_id)
         if not identity:
             return
 
         now = now_iso()
+
+        # Status upgrade (never downgrade)
+        if status:
+            status_order = ["unknown", "candidate", "probable", "confirmed"]
+            current = identity.get("status", "unknown")
+            if status_order.index(status) > status_order.index(current):
+                identity["status"] = status
 
         # Incremental centroid averaging
         old_centroid = identity["embedding_centroid"]

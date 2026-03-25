@@ -221,8 +221,8 @@ class SpeakerResolutionEngine:
             # Strong existing identity, moderate new match — keep as probable
             status = max(status, "probable", key=lambda s: ["unknown", "candidate", "probable", "confirmed"].index(s))
 
-        # Update cluster with new data
-        self.db.update_cluster(best_id, embedding, call_id, speaking_secs)
+        # Update cluster with new data + status upgrade
+        self.db.update_cluster(best_id, embedding, call_id, speaking_secs, status=status)
 
         # Record evidence
         self.db.add_evidence(SpeakerEvidence(

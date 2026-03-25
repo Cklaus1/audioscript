@@ -295,11 +295,66 @@ class AudioProcessor:
                 if fmt == "markdown":
                     self._save_markdown(result_dict, file_path, output_dir)
 
-                # Generate summary if requested
+                # LLM analysis (if API key available)
+                llm_analysis = None
+                try:
+                    from audioscript.llm.analyzer import analyze_transcript, apply_llm_results
+                    from audioscript.llm.cost_tracker import CostTracker
+                    import os
+
+                    if os.environ.get("ANTHROPIC_API_KEY"):
+                        self.console.print(f"LLM analysis: {file_path.name}")
+                        cost_log = output_dir / ".audioscript_llm_costs.jsonl"
+                        tracker = CostTracker(cost_log)
+
+                        llm_analysis = analyze_transcript(
+                            transcript_text=result_dict.get("text", ""),
+                            segments=result_dict.get("segments"),
+                            metadata=result_dict.get("metadata"),
+                            call_id=file_hash,
+                            cost_tracker=tracker,
+                        )
+
+                        if llm_analysis:
+                            result_dict = apply_llm_results(result_dict, llm_analysis)
+                            self.console.print(
+                                f"  Title: {llm_analysis.get('title', '?')}"
+                            )
+                            self.console.print(
+                                f"  Classification: {llm_analysis.get('classification', '?')}"
+                            )
+                            speakers_found = llm_analysis.get("speakers", [])
+                            for s in speakers_found:
+                                if s.get("likely_name"):
+                                    self.console.print(
+                                        f"  Speaker: {s['label']} → {s['likely_name']} ({s.get('evidence', '')})"
+                                    )
+
+                            # Update speaker identity DB with LLM name hints
+                            self._apply_llm_speaker_hints(llm_analysis, result_dict)
+
+                            usage = tracker.session_summary()
+                            self.console.print(
+                                f"  Cost: ${usage['total_cost_usd']:.4f} "
+                                f"({usage['total_input_tokens']}+{usage['total_output_tokens']} tokens)"
+                            )
+
+                            # Re-save JSON with LLM results
+                            _save_results(result_dict, transcription_path)
+                except ImportError:
+                    pass
+                except Exception as e:
+                    logger.warning("LLM analysis failed: %s", e)
+
+                # Generate summary
                 summary_text = None
-                if self.settings.summarize:
-                    self.console.print(f"Generating summary: {file_path.name}")
+                if llm_analysis and llm_analysis.get("summary"):
+                    summary_text = llm_analysis["summary"]
+                elif self.settings.summarize:
                     summary_text = _generate_summary(result_dict)
+
+                if summary_text:
+                    self.console.print(f"Generating summary: {file_path.name}")
                     summary_path = get_output_path(file_path, output_dir, "summary.txt")
                     summary_path.parent.mkdir(parents=True, exist_ok=True)
                     with open(summary_path, "w", encoding="utf-8") as f:
@@ -361,6 +416,53 @@ class AudioProcessor:
             md_path.write_text(md_content, encoding="utf-8")
         except ImportError:
             logger.warning("Markdown formatter not available")
+
+    def _apply_llm_speaker_hints(
+        self,
+        llm_analysis: dict[str, Any],
+        result_dict: dict[str, Any],
+    ) -> None:
+        """Apply LLM speaker name hints to the identity DB as evidence."""
+        try:
+            identity_db = self._get_identity_db()
+            speakers = llm_analysis.get("speakers", [])
+
+            for s in speakers:
+                label = s.get("label", "")
+                name = s.get("likely_name")
+                evidence_text = s.get("evidence", "")
+
+                if not name or not label:
+                    continue
+
+                # Find the cluster ID for this label in the transcript
+                diar = result_dict.get("diarization", {})
+                for resolved in diar.get("speakers_resolved", []):
+                    if resolved.get("local_label") == label or resolved.get("speaker_cluster_id") == label:
+                        cluster_id = resolved["speaker_cluster_id"]
+
+                        # Add as candidate evidence (don't auto-confirm from LLM alone)
+                        from audioscript.speakers.models import SpeakerEvidence, generate_id, now_iso
+                        identity_db.add_evidence(SpeakerEvidence(
+                            evidence_id=generate_id("ev_"),
+                            speaker_cluster_id=cluster_id,
+                            type="llm_inference",
+                            score=0.6,
+                            summary=f"LLM identified as '{name}': {evidence_text}",
+                            details={"name": name, "evidence": evidence_text, "role": s.get("role", "")},
+                            created_at=now_iso(),
+                        ))
+
+                        # Upgrade to candidate if currently unknown
+                        identity = identity_db.data["identities"].get(cluster_id, {})
+                        if identity.get("status") == "unknown":
+                            identity["status"] = "candidate"
+                            identity["updated_at"] = now_iso()
+
+                        identity_db.save()
+                        break
+        except Exception as e:
+            logger.debug("Failed to apply LLM speaker hints: %s", e)
 
     def _export_minotes(
         self,
