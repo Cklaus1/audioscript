@@ -53,6 +53,8 @@ class UnknownSpeakerReporter:
 
         review_items = self.generate_review_queue()
 
+        unknowns_by_id = {i.speaker_cluster_id: i for i in unknowns}
+
         return {
             "total_clusters": len(all_identities),
             "confirmed": len(confirmed),
@@ -70,18 +72,13 @@ class UnknownSpeakerReporter:
             "review_queue": [
                 {
                     "id": item.speaker_cluster_id,
-                    "calls": next(
-                        (i.total_calls for i in unknowns if i.speaker_cluster_id == item.speaker_cluster_id),
-                        0,
-                    ),
-                    "minutes": round(next(
-                        (i.total_speaking_seconds for i in unknowns if i.speaker_cluster_id == item.speaker_cluster_id),
-                        0,
-                    ) / 60, 1),
-                    "last_seen": next(
-                        (i.last_seen for i in unknowns if i.speaker_cluster_id == item.speaker_cluster_id),
-                        "",
-                    ),
+                    "calls": unknowns_by_id[item.speaker_cluster_id].total_calls
+                        if item.speaker_cluster_id in unknowns_by_id else 0,
+                    "minutes": round(
+                        (unknowns_by_id[item.speaker_cluster_id].total_speaking_seconds
+                         if item.speaker_cluster_id in unknowns_by_id else 0) / 60, 1),
+                    "last_seen": unknowns_by_id[item.speaker_cluster_id].last_seen
+                        if item.speaker_cluster_id in unknowns_by_id else "",
                     "priority": item.priority_score,
                     "reason": item.reason,
                 }

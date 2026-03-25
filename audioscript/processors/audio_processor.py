@@ -274,14 +274,12 @@ class AudioProcessor:
                     except Exception as meta_err:
                         logger.warning("Metadata extraction failed: %s", meta_err)
 
-                # Save JSON before diarization
-                _save_results(result_dict, transcription_path)
-
                 # Run speaker diarization if requested
                 if self.settings.diarize:
                     try:
                         result_dict = self._run_diarization(
                             result_dict, audio_to_process, file_path, output_dir,
+                            file_hash=file_hash,
                         )
                         # Re-save JSON with diarization data
                         _save_results(result_dict, transcription_path)
@@ -466,8 +464,9 @@ class AudioProcessor:
                             identity["status"] = "candidate"
                             identity["updated_at"] = now_iso()
 
-                        identity_db.save()
                         break
+
+            identity_db.save()
         except Exception as e:
             logger.debug("Failed to apply LLM speaker hints: %s", e)
 
@@ -508,6 +507,7 @@ class AudioProcessor:
         audio_path: Path,
         file_path: Path,
         output_dir: Path,
+        file_hash: str = "",
     ) -> dict[str, Any]:
         """Run diarization pipeline and merge with transcription result."""
         self.console.print(f"Diarizing: {file_path.name}")
@@ -531,7 +531,7 @@ class AudioProcessor:
             from audioscript.speakers.resolution import SpeakerResolutionEngine
 
             identity_db = self._get_identity_db()
-            call_id = get_file_hash(file_path) if file_path.exists() else file_path.stem
+            call_id = file_hash  # Reuse hash from process_file (avoid re-reading entire file)
             engine = SpeakerResolutionEngine(
                 identity_db,
                 match_threshold=self.settings.speaker_similarity_threshold,
@@ -566,6 +566,12 @@ class AudioProcessor:
                 calendar_joiner=calendar_joiner,
                 transcript_segments=transcript_segs_for_hints,
             )
+
+            # Store diarization segments so apply_to_transcript can assign speakers
+            result.setdefault("diarization", {})["segments"] = diar_result.get("segments", [])
+            result["diarization"]["num_speakers"] = diar_result.get("num_speakers", 0)
+            result["diarization"]["speakers"] = diar_result.get("speakers", [])
+
             result = engine.apply_to_transcript(result, resolutions)
 
             # Report resolution results

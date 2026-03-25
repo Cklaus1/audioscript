@@ -374,19 +374,27 @@ class SyncEngine:
         self.console.print(f"  Staging {len(entries)} files to {staging_dir}...")
         staged: list[FileEntry] = []
 
-        for entry in entries:
+        def _copy_one(entry: FileEntry) -> FileEntry | None:
             dest = staging_dir / entry.path.name
             try:
                 shutil.copy2(entry.path, dest)
-                staged.append(FileEntry(
+                return FileEntry(
                     path=dest,
                     size=entry.size,
                     mtime=entry.mtime,
                     hash=entry.hash,
                     status=entry.status,
-                ))
+                )
             except (OSError, PermissionError) as e:
                 logger.warning("Failed to stage %s: %s", entry.path, e)
+                return None
+
+        from concurrent.futures import ThreadPoolExecutor
+
+        with ThreadPoolExecutor(max_workers=4) as pool:
+            for result in pool.map(_copy_one, entries):
+                if result is not None:
+                    staged.append(result)
 
         return staging_dir, staged
 

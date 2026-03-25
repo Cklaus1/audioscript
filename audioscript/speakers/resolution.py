@@ -24,6 +24,7 @@ from audioscript.speakers.models import (
     generate_id,
     now_iso,
 )
+from audioscript.utils.math_utils import batch_cosine_best_match
 
 logger = logging.getLogger(__name__)
 
@@ -189,21 +190,15 @@ class SpeakerResolutionEngine:
 
         Returns ResolutionResult if a match is found, None otherwise.
         """
-        best_id = None
-        best_score = 0.0
+        candidates = {
+            cluster_id: identity_data["embedding_centroid"]
+            for cluster_id, identity_data in self.db.data["identities"].items()
+            if cluster_id not in used_clusters and identity_data.get("embedding_centroid")
+        }
 
-        for cluster_id, identity_data in self.db.data["identities"].items():
-            if cluster_id in used_clusters:
-                continue  # Already assigned in this call
-
-            centroid = identity_data.get("embedding_centroid", [])
-            if not centroid:
-                continue
-
-            score = _cosine_similarity(embedding, centroid)
-            if score > best_score:
-                best_score = score
-                best_id = cluster_id
+        best_id, best_score = batch_cosine_best_match(
+            embedding, candidates, threshold=self.match_threshold,
+        )
 
         if best_id is None or best_score < self.match_threshold:
             return None
@@ -441,14 +436,30 @@ class SpeakerResolutionEngine:
         """Apply resolution results to a transcript dict.
 
         Updates segment speaker labels and adds enriched speaker info.
+
+        First assigns diarization speaker labels (SPEAKER_00) to segments
+        based on time overlap, then maps to cluster IDs and display names.
         """
         # Build mapping: local_label → resolution
         label_map: dict[str, ResolutionResult] = {}
         for res in resolutions:
             label_map[res.local_label] = res
 
-        # Update segment speaker labels
+        # Get diarization segments for speaker assignment
+        diar = result_dict.get("diarization", {})
+        diar_segments = diar.get("segments", [])
+
+        # Assign speaker labels to transcript segments (if not already present)
         for seg in result_dict.get("segments", []):
+            if not seg.get("speaker"):
+                # Find which diarization speaker owns this segment's midpoint
+                seg_mid = (seg.get("start", 0) + seg.get("end", 0)) / 2
+                for ds in diar_segments:
+                    if ds.get("start", 0) <= seg_mid <= ds.get("end", 0):
+                        seg["speaker"] = ds.get("speaker", "")
+                        break
+
+            # Map to cluster ID and display name
             speaker = seg.get("speaker")
             if speaker and speaker in label_map:
                 res = label_map[speaker]

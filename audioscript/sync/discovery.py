@@ -143,19 +143,26 @@ class FileDiscovery:
         local: list[FileEntry] = []
         cloud: list[FileEntry] = []
 
-        for entry in entries:
+        def _probe_one(entry: FileEntry) -> tuple[FileEntry, str]:
             try:
                 with open(entry.path, "rb") as f:
                     f.read(1024)
-                entry.status = "local"
-                local.append(entry)
+                return entry, "local"
             except PermissionError:
-                # Must be before OSError (PermissionError is a subclass)
-                entry.status = "error"
                 logger.warning("Permission denied: %s", entry.path)
+                return entry, "error"
             except OSError:
-                entry.status = "cloud"
-                cloud.append(entry)
+                return entry, "cloud"
+
+        from concurrent.futures import ThreadPoolExecutor
+
+        with ThreadPoolExecutor(max_workers=16) as pool:
+            for entry, status in pool.map(_probe_one, entries):
+                entry.status = status
+                if status == "local":
+                    local.append(entry)
+                elif status == "cloud":
+                    cloud.append(entry)
 
         return local, cloud
 
