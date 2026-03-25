@@ -62,6 +62,10 @@ Rules:
 - If information is not available, use null or empty arrays — don't guess"""
 
 
+_cached_client: Any = None
+_cached_client_key: str = ""
+
+
 def analyze_transcript(
     transcript_text: str,
     segments: list[dict[str, Any]] | None = None,
@@ -71,6 +75,7 @@ def analyze_transcript(
     cost_tracker: CostTracker | None = None,
     call_id: str = "",
     max_transcript_chars: int = 100_000,
+    client: Any = None,
 ) -> dict[str, Any] | None:
     """Analyze a transcript using Claude.
 
@@ -110,7 +115,15 @@ def analyze_transcript(
     start_time = time.time()
     max_retries = 3
     try:
-        client = anthropic.Anthropic(api_key=api_key)
+        # Reuse client across calls (avoids TLS handshake per file)
+        global _cached_client, _cached_client_key
+        if client is None:
+            if _cached_client is not None and _cached_client_key == api_key:
+                client = _cached_client
+            else:
+                client = anthropic.Anthropic(api_key=api_key)
+                _cached_client = client
+                _cached_client_key = api_key
         response = None
         for attempt in range(max_retries):
             try:

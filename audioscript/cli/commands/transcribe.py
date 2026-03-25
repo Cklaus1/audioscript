@@ -16,7 +16,7 @@ from audioscript.config.settings import TranscriptionTier, get_settings
 from audioscript.cli.output import CLIContext, ExitCode, emit, emit_error, emit_ndjson, emit_progress
 from audioscript.processors.audio_processor import AudioProcessor
 from audioscript.utils.file_utils import ProcessingManifest
-from audioscript.utils.metadata import extract_metadata
+# extract_metadata imported lazily in pipe/batch mode (reads from saved JSON now)
 from audioscript.utils.validate import (
     PathValidationError,
     validate_safe_input,
@@ -347,7 +347,17 @@ def transcribe(
             }
             if settings.metadata and success:
                 try:
-                    ndjson_result["metadata"] = extract_metadata(file_path)
+                    from audioscript.utils.file_utils import get_output_path
+                    json_out = get_output_path(file_path, output_path, "json")
+                    if json_out.exists():
+                        import json as _json
+                        with open(json_out) as _f:
+                            saved = _json.load(_f)
+                        if "metadata" in saved:
+                            ndjson_result["metadata"] = saved["metadata"]
+                    if "metadata" not in ndjson_result:
+                        from audioscript.utils.metadata import extract_metadata
+                        ndjson_result["metadata"] = extract_metadata(file_path)
                 except Exception:
                     pass
             emit_ndjson(ndjson_result)
@@ -392,7 +402,19 @@ def transcribe(
                 }
                 if settings.metadata and success:
                     try:
-                        file_result["metadata"] = extract_metadata(file_path)
+                        # Try reading metadata from saved JSON first (avoid re-running ffprobe)
+                        from audioscript.utils.file_utils import get_output_path
+                        json_out = get_output_path(file_path, output_path, "json")
+                        if json_out.exists():
+                            import json as _json
+                            with open(json_out) as _f:
+                                saved = _json.load(_f)
+                            if "metadata" in saved:
+                                file_result["metadata"] = saved["metadata"]
+                        if "metadata" not in file_result:
+                            # Fallback: extract directly
+                            from audioscript.utils.metadata import extract_metadata
+                            file_result["metadata"] = extract_metadata(file_path)
                     except Exception:
                         pass
                 file_results.append(file_result)
