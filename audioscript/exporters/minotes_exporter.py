@@ -17,7 +17,7 @@ from typing import Any
 logger = logging.getLogger(__name__)
 
 _PLUGIN_NAME = "audioscript"
-_PLUGIN_VERSION = "0.2.0"
+from audioscript import __version__ as _PLUGIN_VERSION
 _TRANSCRIPT_CLASS = "transcript"
 
 

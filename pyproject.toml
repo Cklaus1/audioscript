@@ -34,6 +34,12 @@ diarization = [
     "pyannote.audio>=4.0.0",
     "torchaudio>=2.10.0",
 ]
+llm = [
+    "anthropic>=0.40.0",
+]
+metadata = [
+    "mutagen>=1.47.0",
+]
 dev = [
     "pytest>=9.0.2",
     "black>=26.3.1",

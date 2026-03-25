@@ -33,6 +33,7 @@ def check(ctx: typer.Context) -> None:
         "transcribe": deps["faster_whisper"]["installed"],
         "diarize": deps["pyannote"]["installed"] and result["auth"]["hf_token_set"],
         "vad": deps["faster_whisper"]["installed"],  # Built-in Silero VAD
+        "analyze": deps.get("anthropic", {}).get("installed", False) and result["auth"]["anthropic_api_key_set"],
     }
 
     emit(cli, "check", result)
@@ -83,15 +84,25 @@ def _check_dependencies() -> dict[str, Any]:
     except ImportError:
         deps["pyyaml"] = {"installed": False}
 
+    # anthropic (for LLM analysis)
+    try:
+        import anthropic
+        deps["anthropic"] = {"installed": True, "version": getattr(anthropic, "__version__", "unknown")}
+    except ImportError:
+        deps["anthropic"] = {"installed": False}
+
     return deps
 
 
 def _check_auth() -> dict[str, Any]:
     """Check authentication status."""
     hf_token = os.environ.get("HF_TOKEN", "")
+    anthropic_key = os.environ.get("ANTHROPIC_API_KEY", "")
     return {
         "hf_token_set": bool(hf_token),
         "hf_token_source": "HF_TOKEN env var" if hf_token else None,
+        "anthropic_api_key_set": bool(anthropic_key),
+        "anthropic_api_key_source": "ANTHROPIC_API_KEY env var" if anthropic_key else None,
     }
 
 

@@ -36,6 +36,7 @@ def vad(
         validate_safe_input(input)
     except PathValidationError as e:
         emit_error(cli, ExitCode.VALIDATION_ERROR, "validation", str(e), hint=e.hint)
+        return
 
     input_files = glob.glob(input, recursive=True)
     if not input_files:
@@ -44,6 +45,7 @@ def vad(
             f"No files found: {input}",
             hint="Check the glob pattern and ensure files exist.",
         )
+        return
 
     token = hf_token or os.environ.get("HF_TOKEN")
     if not token:
@@ -53,6 +55,7 @@ def vad(
             hint="Set HF_TOKEN env var or pass --hf-token.",
             docs_url="https://huggingface.co/settings/tokens",
         )
+        return
 
     if cli.dry_run:
         emit(cli, "vad", {

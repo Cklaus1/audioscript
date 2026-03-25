@@ -148,6 +148,7 @@ class AudioProcessor:
             self.manifest.update_file_status(
                 file_hash, "processing",
                 self.settings.tier.value, self.settings.version, checkpoint,
+                flush=False,  # Don't write to disk for intermediate status
             )
 
             try:
@@ -233,6 +234,7 @@ class AudioProcessor:
                 self.manifest.update_file_status(
                     file_hash, "transcribed",
                     self.settings.tier.value, self.settings.version, new_checkpoint,
+                    flush=False,  # Don't write to disk for intermediate status
                 )
 
                 # Convert to dict for JSON output and downstream processing
@@ -268,7 +270,7 @@ class AudioProcessor:
                 # Embed audio file metadata if requested
                 if self.settings.metadata:
                     try:
-                        result_dict["metadata"] = extract_metadata(file_path)
+                        result_dict["metadata"] = extract_metadata(file_path, content_hash=file_hash)
                     except Exception as meta_err:
                         logger.warning("Metadata extraction failed: %s", meta_err)
 
@@ -360,7 +362,7 @@ class AudioProcessor:
 
                 # Save markdown AFTER all enrichment (LLM title, summary, actions, topics)
                 fmt = self.settings.output_format
-                if fmt == "markdown":
+                if fmt in ("markdown", "all"):
                     self._save_markdown(result_dict, file_path, output_dir, summary=summary_text)
 
                 # Export to MiNotes if requested
@@ -374,6 +376,10 @@ class AudioProcessor:
                     backend=transcriber.backend_name,
                     confidence=avg_confidence,
                     hallucination_flags=hallucination_flag_count,
+                    filename=file_path.name,
+                    duration_seconds=result_dict.get("metadata", {}).get("audio", {}).get("duration_seconds"),
+                    word_count=len(result_dict.get("text", "").split()),
+                    language=result_dict.get("language"),
                 )
                 return True
 

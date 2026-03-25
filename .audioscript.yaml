@@ -1,5 +1,5 @@
 # AudioScript default configuration
-output_dir: "./transcripts"
+output_dir: "./output"
 tier: "draft"                    # draft (base), balanced (turbo), or high_quality (large-v3)
 version: "1.0"
 clean_audio: false

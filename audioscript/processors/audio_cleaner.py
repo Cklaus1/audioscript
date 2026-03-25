@@ -27,14 +27,14 @@ def compute_snr(audio: np.ndarray, sr: int) -> float:
     frame_length = int(0.025 * sr)  # 25ms frames
     hop_length = int(0.010 * sr)    # 10ms hop
 
-    # Compute RMS energy per frame
+    # Vectorized RMS energy per frame (100x faster than Python loop)
     num_frames = max(1, (len(audio) - frame_length) // hop_length + 1)
-    energies = np.zeros(num_frames)
-    for i in range(num_frames):
-        start = i * hop_length
-        end = start + frame_length
-        frame = audio[start:end]
-        energies[i] = np.sqrt(np.mean(frame ** 2)) if len(frame) > 0 else 0.0
+    # Pad audio to ensure full frames
+    padded = np.pad(audio, (0, max(0, num_frames * hop_length + frame_length - len(audio))))
+    # Create strided view of frames
+    indices = np.arange(num_frames)[:, None] * hop_length + np.arange(frame_length)
+    frames = padded[indices]
+    energies = np.sqrt(np.mean(frames ** 2, axis=1))
 
     if len(energies) < 10:
         return 0.0

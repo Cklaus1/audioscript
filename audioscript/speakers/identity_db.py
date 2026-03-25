@@ -12,7 +12,6 @@ from __future__ import annotations
 import fcntl
 import json
 import logging
-import math
 import os
 import tempfile
 from pathlib import Path
@@ -27,19 +26,9 @@ from audioscript.speakers.models import (
     now_iso,
 )
 
+from audioscript.utils.math_utils import cosine_similarity as _cosine_similarity
+
 logger = logging.getLogger(__name__)
-
-
-def _cosine_similarity(a: list[float], b: list[float]) -> float:
-    """Compute cosine similarity between two embedding vectors."""
-    if len(a) != len(b) or not a:
-        return 0.0
-    dot = sum(x * y for x, y in zip(a, b))
-    norm_a = math.sqrt(sum(x * x for x in a))
-    norm_b = math.sqrt(sum(x * x for x in b))
-    if norm_a == 0 or norm_b == 0:
-        return 0.0
-    return dot / (norm_a * norm_b)
 
 
 class SpeakerIdentityDB:

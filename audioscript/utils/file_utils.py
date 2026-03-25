@@ -14,8 +14,8 @@ from typing import Any
 
 logger = logging.getLogger(__name__)
 
-# Buffer size for reading files in chunks (8 KB)
-_HASH_BUF_SIZE = 8192
+# Buffer size for reading files in chunks (256 KB — reduces syscalls 30x on large audio)
+_HASH_BUF_SIZE = 262144
 
 
 def get_file_hash(file_path: Path) -> str:
@@ -150,8 +150,18 @@ class ProcessingManifest:
         confidence: float | None = None,
         hallucination_flags: int | None = None,
         error_category: str | None = None,
+        filename: str | None = None,
+        duration_seconds: float | None = None,
+        word_count: int | None = None,
+        language: str | None = None,
+        flush: bool = True,
     ) -> None:
-        """Update the status of a file in the manifest."""
+        """Update the status of a file in the manifest.
+
+        Set flush=False for intermediate updates (processing, transcribed)
+        to avoid unnecessary disk writes. Call with flush=True (default)
+        for final status changes (completed, error).
+        """
         if file_hash not in self.data["files"]:
             self.data["files"][file_hash] = {}
 
@@ -180,7 +190,20 @@ class ProcessingManifest:
         if error_category is not None:
             self.data["files"][file_hash]["error_category"] = error_category
 
-        self.save()
+        if filename is not None:
+            self.data["files"][file_hash]["filename"] = filename
+
+        if duration_seconds is not None:
+            self.data["files"][file_hash]["duration_seconds"] = duration_seconds
+
+        if word_count is not None:
+            self.data["files"][file_hash]["word_count"] = word_count
+
+        if language is not None:
+            self.data["files"][file_hash]["language"] = language
+
+        if flush:
+            self.save()
 
     def get_checkpoint(self, file_hash: str) -> str | None:
         """Get the checkpoint information for a file."""

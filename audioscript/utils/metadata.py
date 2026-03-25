@@ -22,8 +22,12 @@ from typing import Any, Dict, List, Optional
 logger = logging.getLogger(__name__)
 
 
-def extract_metadata(file_path: Path) -> Dict[str, Any]:
+def extract_metadata(file_path: Path, content_hash: str | None = None) -> Dict[str, Any]:
     """Extract all available metadata from an audio file.
+
+    Args:
+        file_path: Path to the audio file.
+        content_hash: Pre-computed SHA-256 hash (avoids re-hashing).
 
     Returns a dict with sections: file, audio, tags, recording.
     Missing/unavailable sections are omitted rather than null.
@@ -31,7 +35,7 @@ def extract_metadata(file_path: Path) -> Dict[str, Any]:
     meta: Dict[str, Any] = {}
 
     # --- File info ---
-    meta["file"] = _extract_file_info(file_path)
+    meta["file"] = _extract_file_info(file_path, content_hash=content_hash)
 
     # --- Audio properties via ffprobe ---
     audio_info = _extract_ffprobe(file_path)
@@ -51,7 +55,7 @@ def extract_metadata(file_path: Path) -> Dict[str, Any]:
     return meta
 
 
-def _extract_file_info(file_path: Path) -> Dict[str, Any]:
+def _extract_file_info(file_path: Path, content_hash: str | None = None) -> Dict[str, Any]:
     """Basic file system info."""
     stat = file_path.stat()
     info: Dict[str, Any] = {
@@ -65,12 +69,15 @@ def _extract_file_info(file_path: Path) -> Dict[str, Any]:
         "created": datetime.fromtimestamp(stat.st_ctime).isoformat(),
     }
 
-    # Content hash for dedup / tracking
-    try:
-        from audioscript.utils.file_utils import get_file_hash
-        info["content_hash"] = get_file_hash(file_path)
-    except Exception:
-        pass
+    # Content hash — reuse pre-computed if available
+    if content_hash:
+        info["content_hash"] = content_hash
+    else:
+        try:
+            from audioscript.utils.file_utils import get_file_hash
+            info["content_hash"] = get_file_hash(file_path)
+        except Exception:
+            pass
 
     return info
 

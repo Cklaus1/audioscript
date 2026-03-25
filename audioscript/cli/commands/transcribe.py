@@ -9,7 +9,7 @@ from pathlib import Path
 from typing import Any, Optional
 
 import typer
-from rich.progress import Progress, SpinnerColumn, TextColumn, TimeElapsedColumn
+from rich.progress import BarColumn, Progress, SpinnerColumn, TextColumn, TimeElapsedColumn, TimeRemainingColumn
 
 from audioscript import __version__
 from audioscript.config.settings import TranscriptionTier, get_settings
@@ -143,7 +143,6 @@ def transcribe(
     shortcut: Optional[str] = typer.Option(None, "--shortcut", "-s", help="Preset shortcut: +subtitle, +meeting, +draft, +hq"),
     # --- Batch control ---
     delay: Optional[float] = typer.Option(None, "--delay", help="Delay in seconds between files (for resource management)"),
-    concurrency: Optional[int] = typer.Option(None, "--concurrency", help="Max parallel file processing (default: 1, sequential)"),
 ) -> None:
     """Transcribe audio files with optional diarization, VAD, and subtitle output."""
     cli: CLIContext = ctx.obj
@@ -157,6 +156,7 @@ def transcribe(
                 f"Unknown shortcut '{shortcut}'. Available: {', '.join(SHORTCUTS.keys())}",
                 hint="Use --shortcut +subtitle, +meeting, +draft, or +hq.",
             )
+            return
         shortcut_overrides = SHORTCUTS[shortcut]
 
     # --- Validate paths (agent safety) ---
@@ -168,6 +168,7 @@ def transcribe(
                 cli, ExitCode.VALIDATION_ERROR, "validation", str(e),
                 hint=e.hint,
             )
+            return
 
     # Env var fallbacks
     effective_output_dir = output_dir or os.environ.get("AUDIOSCRIPT_OUTPUT_DIR")
@@ -189,6 +190,7 @@ def transcribe(
                 cli, ExitCode.VALIDATION_ERROR, "validation", str(e),
                 hint=e.hint,
             )
+            return
 
     if speaker_db:
         try:
@@ -198,6 +200,7 @@ def transcribe(
                 cli, ExitCode.VALIDATION_ERROR, "validation", str(e),
                 hint=e.hint,
             )
+            return
 
     if reference_rttm:
         try:
@@ -207,6 +210,7 @@ def transcribe(
                 cli, ExitCode.VALIDATION_ERROR, "validation", str(e),
                 hint=e.hint,
             )
+            return
 
     # Handle --pipe: read file paths from stdin
     if cli.pipe and not input:
@@ -272,6 +276,7 @@ def transcribe(
                 "No input files specified.",
                 hint="Use --input <file_or_glob> or pipe file paths via --pipe.",
             )
+            return
         input_files = glob.glob(settings.input, recursive=True)
 
     if not input_files:
@@ -280,6 +285,7 @@ def transcribe(
             f"No files found matching: {settings.input}",
             hint="Check the glob pattern and ensure files exist.",
         )
+        return
 
     output_path = Path(settings.output_dir)
     output_path.mkdir(parents=True, exist_ok=True)
@@ -354,7 +360,10 @@ def transcribe(
         with Progress(
             SpinnerColumn(),
             TextColumn("[progress.description]{task.description}"),
+            BarColumn(),
+            TextColumn("[progress.percentage]{task.percentage:>3.0f}%"),
             TimeElapsedColumn(),
+            TimeRemainingColumn(),
             console=cli.console,
         ) as progress:
             task = progress.add_task(f"[cyan]Processing {len(input_files)} files...", total=len(input_files))

@@ -197,6 +197,7 @@ def speakers_enroll(
         })
     except Exception as e:
         emit_error(cli, ExitCode.TRANSCRIPTION_ERROR, "enrollment", str(e))
+        return
 
 
 @speakers_app.command("split")

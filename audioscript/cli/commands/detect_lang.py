@@ -37,6 +37,7 @@ def detect_language(
         validate_safe_input(input)
     except PathValidationError as e:
         emit_error(cli, ExitCode.VALIDATION_ERROR, "validation", str(e), hint=e.hint)
+        return
 
     input_files = glob.glob(input, recursive=True)
     if not input_files:
@@ -45,6 +46,7 @@ def detect_language(
             f"No files found: {input}",
             hint="Check the glob pattern and ensure files exist.",
         )
+        return
 
     if cli.dry_run:
         emit(cli, "detect-language", {
