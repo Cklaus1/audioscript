@@ -88,11 +88,15 @@ class SpeakerIdentityDB:
                 prefix=".speaker_id_",
                 suffix=".tmp",
             )
+            fd_closed = False
             try:
                 with os.fdopen(fd, "w") as f:
+                    fd_closed = True
                     json.dump(self.data, f, indent=2, default=str)
                 os.replace(tmp_path, self.db_path)
             except BaseException:
+                if not fd_closed:
+                    os.close(fd)
                 try:
                     os.unlink(tmp_path)
                 except OSError:

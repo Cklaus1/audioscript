@@ -60,10 +60,22 @@ class SpeakerDatabase:
             return {"version": "1.0", "speakers": {}}
 
     def save(self) -> None:
-        """Save the speaker database to disk."""
+        """Save the speaker database to disk atomically."""
+        import tempfile
         self.db_path.parent.mkdir(parents=True, exist_ok=True)
-        with open(self.db_path, "w") as f:
-            json.dump(self.data, f, indent=2)
+        fd, tmp_path = tempfile.mkstemp(
+            dir=self.db_path.parent, prefix=".speakers_", suffix=".tmp",
+        )
+        try:
+            with os.fdopen(fd, "w") as f:
+                json.dump(self.data, f, indent=2)
+            os.replace(tmp_path, self.db_path)
+        except BaseException:
+            try:
+                os.unlink(tmp_path)
+            except OSError:
+                pass
+            raise
 
     @property
     def speaker_names(self) -> List[str]:

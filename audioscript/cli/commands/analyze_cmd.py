@@ -17,7 +17,7 @@ from typing import Optional
 import typer
 
 from audioscript import __version__
-from audioscript.cli.output import CLIContext, ExitCode, emit, emit_error
+from audioscript.cli.output import CLIContext, ExitCode, emit, emit_error, emit_ndjson
 
 analyze_app = typer.Typer(
     name="analyze",
@@ -77,12 +77,24 @@ def analyze(
         return
 
     if cli.dry_run:
+        # Estimate cost from transcript sizes
+        total_chars = 0
+        for jf in json_files:
+            try:
+                total_chars += Path(jf).stat().st_size
+            except OSError:
+                pass
+        # Rough estimate: ~4 chars per token, Sonnet $3/M input + $15/M output
+        est_tokens = total_chars // 4
+        est_cost = (est_tokens / 1_000_000) * 3.0 + (len(json_files) * 800 / 1_000_000) * 15.0
         emit(cli, "analyze", {
             "dry_run": True,
             "files": json_files,
             "file_count": len(json_files),
             "model": model or "claude-sonnet-4-6",
             "regenerate_markdown": regenerate_markdown,
+            "estimated_input_tokens": est_tokens,
+            "estimated_cost_usd": round(est_cost, 4),
         })
         return
 
@@ -158,7 +170,7 @@ def analyze(
             md_path.write_text(md_content, encoding="utf-8")
             cli.console.print(f"  Markdown: {md_path.name}")
 
-        results.append({
+        file_result = {
             "file": json_path.name,
             "status": "completed",
             "title": llm_result.get("title"),
@@ -166,7 +178,12 @@ def analyze(
             "speakers": len(speakers),
             "actions": len(llm_result.get("action_items", [])),
             "topics": llm_result.get("topics", []),
-        })
+        }
+
+        if cli.pipe:
+            emit_ndjson(file_result)
+        else:
+            results.append(file_result)
 
     # Summary
     usage = cost_tracker.session_summary()
