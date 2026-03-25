@@ -83,17 +83,31 @@ def validate_energy(
     audio_path: str,
     segments: list[TranscriptionSegment],
     energy_threshold: float = 0.01,
+    max_duration_seconds: float = 1800,  # Skip for files > 30 min
 ) -> list[bool]:
     """Layer 4: Cross-check text against audio energy per segment.
 
     Returns per-segment flag: True if suspicious (text from near-silent audio).
+    Skips loading audio for files longer than max_duration_seconds to avoid
+    10-30s overhead on long recordings (confidence + repetition layers are sufficient).
     """
     try:
         import librosa
         import numpy as np
 
+        # Quick duration check via file metadata to avoid loading huge files
+        import os
+        file_size = os.path.getsize(audio_path)
+        # Rough estimate: 200kbps * max_duration = max file size (~45MB for 30min)
+        if file_size > max_duration_seconds * 25000:
+            logger.debug("Skipping energy validation for large file (%d bytes)", file_size)
+            return [False] * len(segments)
+
         audio, sr = librosa.load(audio_path, sr=None, mono=True)
         duration = len(audio) / sr
+
+        if duration > max_duration_seconds:
+            return [False] * len(segments)
 
         flags: list[bool] = []
         for seg in segments:

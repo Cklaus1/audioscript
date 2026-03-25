@@ -108,20 +108,17 @@ def analyze(
     first_dir = Path(json_files[0]).parent
     cost_tracker = CostTracker(first_dir / ".audioscript_llm_costs.jsonl")
 
-    results = []
-    for json_path_str in json_files:
-        json_path = Path(json_path_str)
-        cli.console.print(f"\nAnalyzing: {json_path.name}")
+    from concurrent.futures import ThreadPoolExecutor, as_completed
 
+    def _analyze_one(json_path_str: str) -> dict:
+        """Analyze a single file — safe for concurrent execution."""
+        json_path = Path(json_path_str)
         try:
             with open(json_path) as f:
                 data = json.load(f)
         except (json.JSONDecodeError, OSError) as e:
-            cli.console.print(f"  [red]Failed to read:[/] {e}")
-            results.append({"file": json_path.name, "status": "error", "error": str(e)})
-            continue
+            return {"file": json_path.name, "status": "error", "error": str(e)}
 
-        # Run LLM analysis
         llm_result = analyze_transcript(
             transcript_text=data.get("text", ""),
             segments=data.get("segments"),
@@ -133,44 +130,22 @@ def analyze(
         )
 
         if not llm_result:
-            cli.console.print("  [yellow]LLM analysis returned no results[/]")
-            results.append({"file": json_path.name, "status": "no_result"})
-            continue
+            return {"file": json_path.name, "status": "no_result"}
 
-        # Apply results to data
         data = apply_llm_results(data, llm_result)
 
-        # Re-save JSON
         with open(json_path, "w", encoding="utf-8") as f:
             json.dump(data, f, indent=2, ensure_ascii=False, default=str)
 
-        cli.console.print(f"  Title: {llm_result.get('title', '?')}")
-        cli.console.print(f"  Classification: {llm_result.get('classification', '?')}")
-        cli.console.print(f"  Actions: {len(llm_result.get('action_items', []))}")
-        cli.console.print(f"  Topics: {llm_result.get('topics', [])}")
-
-        speakers = llm_result.get("speakers", [])
-        for s in speakers:
-            if s.get("likely_name"):
-                cli.console.print(f"  Speaker: {s['label']} → {s['likely_name']}")
-
-        # Regenerate markdown
         if regenerate_markdown:
             from audioscript.formatters.markdown_formatter import render_markdown
-
             audio_path = Path(data.get("metadata", {}).get("file", {}).get("name", json_path.stem))
-            summary = llm_result.get("summary") or data.get("text", "")[:100]
+            summary_text = llm_result.get("summary") or data.get("text", "")[:100]
+            md_content = render_markdown(data, audio_path, metadata=data.get("metadata"), summary=summary_text)
+            json_path.with_suffix(".md").write_text(md_content, encoding="utf-8")
 
-            md_content = render_markdown(
-                data, audio_path,
-                metadata=data.get("metadata"),
-                summary=summary,
-            )
-            md_path = json_path.with_suffix(".md")
-            md_path.write_text(md_content, encoding="utf-8")
-            cli.console.print(f"  Markdown: {md_path.name}")
-
-        file_result = {
+        speakers = llm_result.get("speakers", [])
+        return {
             "file": json_path.name,
             "status": "completed",
             "title": llm_result.get("title"),
@@ -180,10 +155,21 @@ def analyze(
             "topics": llm_result.get("topics", []),
         }
 
-        if cli.pipe:
-            emit_ndjson(file_result)
-        else:
-            results.append(file_result)
+    # Parallel LLM calls — up to 8 concurrent API requests
+    max_workers = min(8, len(json_files))
+    results = []
+
+    with ThreadPoolExecutor(max_workers=max_workers) as pool:
+        futures = {pool.submit(_analyze_one, f): f for f in json_files}
+        for future in as_completed(futures):
+            file_result = future.result()
+            cli.console.print(
+                f"  {file_result['file']}: {file_result.get('title', file_result['status'])}"
+            )
+            if cli.pipe:
+                emit_ndjson(file_result)
+            else:
+                results.append(file_result)
 
     # Summary
     usage = cost_tracker.session_summary()

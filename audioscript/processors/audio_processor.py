@@ -68,6 +68,24 @@ class AudioProcessor:
             self._transcriber = create_transcriber(self.settings)
         return self._transcriber
 
+    def _release_gpu_memory(self) -> None:
+        """Release GPU memory by unloading the transcription model.
+
+        Called between transcription and diarization to free VRAM.
+        The model will be re-loaded lazily if needed for the next file.
+        """
+        if self._transcriber is not None:
+            try:
+                if hasattr(self._transcriber, 'model') and self._transcriber.model is not None:
+                    del self._transcriber.model
+                    self._transcriber.model = None
+                import torch
+                if torch.cuda.is_available():
+                    torch.cuda.empty_cache()
+                logger.debug("Released GPU memory (transcription model unloaded)")
+            except Exception:
+                pass
+
     def _get_diarizer(self) -> Any:
         """Get or lazily initialize the speaker diarizer."""
         if self._diarizer is None:
@@ -276,6 +294,8 @@ class AudioProcessor:
 
                 # Run speaker diarization if requested
                 if self.settings.diarize:
+                    # Release transcription model to free GPU memory for diarization
+                    self._release_gpu_memory()
                     try:
                         result_dict = self._run_diarization(
                             result_dict, audio_to_process, file_path, output_dir,

@@ -255,7 +255,7 @@ class SyncConfig(BaseModel):
     ignore_patterns: list[str] = Field(default_factory=lambda: ["*.tmp", ".*"])
     poll_interval: int = Field(default=300)
     batch_size: int = Field(default=10)
-    delay_between: float = Field(default=2.0)
+    delay_between: float = Field(default=0.0)  # Seconds between files (0 = no delay, GPU model is reused)
     skip_older_than: int | None = Field(default=None)
     min_file_size: int = Field(default=1024)
     max_file_size: int | None = Field(default=None)
