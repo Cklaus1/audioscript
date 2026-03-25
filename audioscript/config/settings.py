@@ -14,7 +14,7 @@ from pydantic import BaseModel, Field, field_validator, model_validator
 logger = logging.getLogger(__name__)
 
 VALID_OUTPUT_FORMATS = {"json", "txt", "vtt", "srt", "tsv", "all", "markdown"}
-VALID_BACKENDS = {"faster-whisper"}
+VALID_BACKENDS = {"faster-whisper", "nim-asr"}
 VALID_CLEAN_LEVELS = {"light", "moderate", "aggressive"}
 VALID_HALLUCINATION_FILTERS = {"auto", "flag", "off"}
 VALID_RETRY_STRATEGIES = {"smart", "always", "never"}
@@ -94,6 +94,7 @@ class AudioScriptConfig(BaseModel):
 
     # Backend options
     backend: str = Field(default="faster-whisper")
+    nim_asr_url: str = Field(default="http://localhost:9000")
 
     # Audio cleaning options
     clean_level: str = Field(default="moderate")
@@ -117,6 +118,8 @@ class AudioScriptConfig(BaseModel):
     # LLM analysis options
     llm_analysis: bool = Field(default=True)
     llm_model: str = Field(default="claude-sonnet-4-6")
+    llm_provider: str = Field(default="anthropic")  # "anthropic" | "openai" | "nim"
+    llm_base_url: str | None = Field(default=None)  # For openai/nim: http://localhost:8000/v1
 
     @field_validator("output_format")
     @classmethod

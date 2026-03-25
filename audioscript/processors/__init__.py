@@ -13,7 +13,19 @@ logger = logging.getLogger(__name__)
 
 
 def create_transcriber(settings: AudioScriptConfig) -> TranscriberBackend:
-    """Create a faster-whisper transcription backend."""
+    """Create a transcription backend based on settings.
+
+    Supports ``faster-whisper`` (local CTranslate2 model) and ``nim-asr``
+    (NVIDIA NIM ASR microservice over HTTP).
+    """
+    if settings.backend == "nim-asr":
+        from audioscript.processors.nim_transcriber import NimTranscriber
+
+        return NimTranscriber(
+            nim_url=settings.nim_asr_url,
+            model_name=settings.model,
+        )
+
     from audioscript.processors.faster_whisper_transcriber import (
         FasterWhisperTranscriber,
     )

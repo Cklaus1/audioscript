@@ -28,6 +28,8 @@ from audioscript.cli.commands.cost_cmd import cost_app
 from audioscript.cli.commands.show_cmd import show_app
 from audioscript.cli.commands.search_cmd import search_app
 from audioscript.cli.commands.init_cmd import init_app
+from audioscript.cli.commands.digest_cmd import digest_app
+from audioscript.cli.commands.service_cmd import service_app
 
 from rich.console import Console
 
@@ -55,6 +57,8 @@ app.add_typer(cost_app, name="cost", help="View LLM token usage and costs.")
 app.add_typer(show_app, name="show", help="View a transcript in the terminal.")
 app.add_typer(search_app, name="search", help="Search across all transcripts.")
 app.add_typer(init_app, name="init", help="Set up AudioScript for first use.")
+app.add_typer(digest_app, name="digest", help="Generate a summary digest of recent transcripts.")
+app.add_typer(service_app, name="service", help="Install audioscript sync as a background service.")
 
 
 def version_callback(value: bool) -> None:

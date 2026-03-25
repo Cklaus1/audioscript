@@ -327,6 +327,8 @@ class AudioProcessor:
                             segments=result_dict.get("segments"),
                             metadata=result_dict.get("metadata"),
                             model=self.settings.llm_model,
+                            provider=self.settings.llm_provider,
+                            base_url=self.settings.llm_base_url,
                             call_id=file_hash,
                             cost_tracker=tracker,
                         )
