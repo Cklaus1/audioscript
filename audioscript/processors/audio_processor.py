@@ -317,7 +317,12 @@ class AudioProcessor:
                     from audioscript.llm.cost_tracker import CostTracker
                     import os
 
-                    if self.settings.llm_analysis and os.environ.get("ANTHROPIC_API_KEY"):
+                    has_llm_key = (
+                        os.environ.get("ANTHROPIC_API_KEY")
+                        or os.environ.get("OPENAI_API_KEY")
+                        or os.environ.get("NVIDIA_API_KEY")
+                    )
+                    if self.settings.llm_analysis and has_llm_key:
                         self.console.print(f"LLM analysis: {file_path.name}")
                         cost_log = output_dir / ".audioscript_llm_costs.jsonl"
                         tracker = CostTracker(cost_log)

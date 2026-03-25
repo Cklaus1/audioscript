@@ -71,6 +71,44 @@ Rules:
 _cached_client: Any = None
 _cached_client_key: str = ""
 
+# Rate limiter for NIM (40 req/min default)
+import threading
+
+class _RateLimiter:
+    """Simple sliding window rate limiter."""
+
+    def __init__(self, max_requests: int = 40, window_seconds: float = 60.0):
+        self.max_requests = max_requests
+        self.window = window_seconds
+        self._timestamps: list[float] = []
+        self._lock = threading.Lock()
+
+    def wait(self) -> None:
+        """Block until a request slot is available."""
+        with self._lock:
+            now = time.time()
+            # Prune old timestamps outside the window
+            cutoff = now - self.window
+            self._timestamps = [t for t in self._timestamps if t > cutoff]
+
+            if len(self._timestamps) >= self.max_requests:
+                # Wait until the oldest request falls outside the window
+                sleep_time = self._timestamps[0] - cutoff + 0.1
+                if sleep_time > 0:
+                    logger.info("Rate limit: sleeping %.1fs (%d/%d in window)",
+                                sleep_time, len(self._timestamps), self.max_requests)
+                    self._lock.release()
+                    time.sleep(sleep_time)
+                    self._lock.acquire()
+                    # Re-prune after sleep
+                    now = time.time()
+                    cutoff = now - self.window
+                    self._timestamps = [t for t in self._timestamps if t > cutoff]
+
+            self._timestamps.append(time.time())
+
+_nim_rate_limiter = _RateLimiter(max_requests=40, window_seconds=60.0)
+
 
 def _resolve_api_key(provider: str, api_key: str | None) -> str | None:
     """Resolve the API key for the given provider."""
@@ -259,6 +297,10 @@ def analyze_transcript(
                     )
                     _cached_client = client
                     _cached_client_key = cache_key
+
+            # Rate limit for NIM (40 req/min)
+            if provider == "nim":
+                _nim_rate_limiter.wait()
 
             response_text, input_tokens, output_tokens = _call_openai_compatible(
                 client, model, user_message, max_retries,

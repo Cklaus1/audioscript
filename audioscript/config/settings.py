@@ -120,6 +120,7 @@ class AudioScriptConfig(BaseModel):
     llm_model: str = Field(default="claude-sonnet-4-6")
     llm_provider: str = Field(default="anthropic")  # "anthropic" | "openai" | "nim"
     llm_base_url: str | None = Field(default=None)  # For openai/nim: http://localhost:8000/v1
+    nim_rate_limit: int = Field(default=40)  # Max requests per minute for NIM API
 
     @field_validator("output_format")
     @classmethod
