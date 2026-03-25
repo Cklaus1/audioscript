@@ -41,6 +41,7 @@ class SourceReport:
     transcribed: int = 0
     failed: int = 0
     results: list[dict[str, Any]] = field(default_factory=list)
+    speaker_summary: dict[str, Any] | None = None
 
 
 @dataclass
@@ -260,6 +261,24 @@ class SyncEngine:
         self.console.print(
             f"  Done: {report.transcribed} transcribed, {report.failed} failed"
         )
+
+        # Speaker summary (if diarization was used)
+        try:
+            from audioscript.speakers.identity_db import SpeakerIdentityDB
+            from audioscript.speakers.reporter import UnknownSpeakerReporter
+
+            id_db_path = Path(output_dir) / "speaker_identities.json"
+            if id_db_path.exists():
+                id_db = SpeakerIdentityDB(id_db_path)
+                reporter = UnknownSpeakerReporter(id_db)
+                summary = reporter.generate_summary()
+                report.speaker_summary = summary
+                self.console.print(
+                    f"  Speakers: {summary['total_clusters']} total, "
+                    f"{summary['confirmed']} confirmed, {summary['unknown']} unknown"
+                )
+        except Exception:
+            pass
 
         return report
 

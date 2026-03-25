@@ -79,9 +79,21 @@ def format_frontmatter(
     if backend:
         lines.append(f"backend: {backend}")
 
-    # Speakers
+    # Speakers (with cluster IDs and names)
     diar = result.get("diarization", {})
-    if diar.get("speakers"):
+    resolved = diar.get("speakers_resolved", [])
+    if resolved:
+        speaker_labels = []
+        for s in resolved:
+            name = s.get("display_name") or s.get("speaker_cluster_id", "")
+            cluster = s.get("speaker_cluster_id", "")
+            if name != cluster:
+                speaker_labels.append(f"{name} ({cluster})")
+            else:
+                speaker_labels.append(cluster)
+        lines.append(f"speakers: [{', '.join(speaker_labels)}]")
+        lines.append(f"speaker_count: {len(resolved)}")
+    elif diar.get("speakers"):
         speakers_list = ", ".join(diar["speakers"])
         lines.append(f"speakers: [{speakers_list}]")
 

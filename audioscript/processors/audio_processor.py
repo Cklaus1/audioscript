@@ -427,7 +427,22 @@ class AudioProcessor:
                 identity_db,
                 match_threshold=self.settings.speaker_similarity_threshold,
             )
-            resolutions = engine.resolve_call(diar_result, call_id, file_path)
+            # Calendar joiner (Stage E) — optional, requires ms365-cli
+            calendar_joiner = None
+            try:
+                from audioscript.speakers.calendar import CalendarJoiner
+                cj = CalendarJoiner()
+                if cj.is_available():
+                    calendar_joiner = cj
+            except Exception:
+                pass
+
+            resolutions = engine.resolve_call(
+                diar_result, call_id, file_path,
+                call_metadata=result.get("metadata") if isinstance(result, dict) else None,
+                calendar_joiner=calendar_joiner,
+                transcript_segments=result.get("segments") if isinstance(result, dict) else None,
+            )
             result = engine.apply_to_transcript(result, resolutions)
 
             # Report resolution results

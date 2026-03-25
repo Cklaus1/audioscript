@@ -74,6 +74,9 @@ class SpeakerResolutionEngine:
         diarization_result: dict[str, Any],
         call_id: str,
         file_path: Path | None = None,
+        call_metadata: dict[str, Any] | None = None,
+        calendar_joiner: Any | None = None,
+        transcript_segments: list[dict[str, Any]] | None = None,
     ) -> list[ResolutionResult]:
         """Run full resolution pipeline for all speakers in one call.
 
@@ -82,6 +85,9 @@ class SpeakerResolutionEngine:
                 'speakers', 'segments', and 'speaker_embeddings'.
             call_id: Unique identifier for this call (usually file hash).
             file_path: Source audio file path (for logging).
+            call_metadata: Audio metadata dict (for calendar matching by timestamp).
+            calendar_joiner: CalendarJoiner instance (for Stage E).
+            transcript_segments: Transcript segments (for Stage F name hints).
 
         Returns:
             List of ResolutionResult, one per diarized speaker.
@@ -144,6 +150,17 @@ class SpeakerResolutionEngine:
             ))
 
             results.append(result)
+
+        # Stage E: Calendar join — generate candidates from attendees
+        if calendar_joiner and call_metadata:
+            self._stage_e_calendar(results, call_metadata, calendar_joiner)
+
+        # Stage F: Transcript name hints — regex-based name extraction
+        if transcript_segments:
+            self._stage_f_transcript_hints(results, transcript_segments)
+
+        # Stage G: Aggregate confidence (re-score with all evidence)
+        self._stage_g_aggregate_confidence(results)
 
         # Update co-speaker lists
         self._update_co_speakers(results)
@@ -259,6 +276,135 @@ class SpeakerResolutionEngine:
             source="auto_cluster",
             is_new_cluster=True,
         )
+
+    def _stage_e_calendar(
+        self,
+        results: list[ResolutionResult],
+        call_metadata: dict[str, Any],
+        calendar_joiner: Any,
+    ) -> None:
+        """Stage E: Calendar join — match call to event, generate candidates."""
+        try:
+            audio_meta = call_metadata.get("audio", {})
+            format_tags = audio_meta.get("format_tags", {})
+
+            # Get call timestamp from metadata
+            creation_time = format_tags.get("creation_time")
+            if not creation_time:
+                return
+
+            duration = audio_meta.get("duration_seconds", 0)
+            event = calendar_joiner.match_call(creation_time, duration)
+            if not event:
+                return
+
+            # Get already-confirmed names to exclude
+            confirmed_names = {r.display_name for r in results if r.display_name}
+            resolved_ids = {r.speaker_cluster_id for r in results}
+
+            candidates = calendar_joiner.generate_candidates(event, resolved_ids, confirmed_names)
+
+            if not candidates:
+                return
+
+            # Distribute candidates to unresolved speakers
+            unresolved = [r for r in results if r.status in ("unknown", "candidate")]
+            for r in unresolved:
+                r.candidate_names.extend(candidates)
+
+                # Record evidence
+                self.db.add_evidence(SpeakerEvidence(
+                    evidence_id=generate_id("ev_"),
+                    speaker_cluster_id=r.speaker_cluster_id,
+                    type="calendar_overlap",
+                    score=0.5,
+                    summary=f"Calendar event '{event.title}' has unmatched attendees: {[c['name'] for c in candidates]}",
+                    details={"event_id": event.event_id, "event_title": event.title},
+                    created_at=now_iso(),
+                ))
+
+            logger.info(
+                "Stage E: Calendar matched '%s' with %d candidates for %d unresolved speakers",
+                event.title, len(candidates), len(unresolved),
+            )
+        except Exception as e:
+            logger.debug("Stage E calendar join failed: %s", e)
+
+    def _stage_f_transcript_hints(
+        self,
+        results: list[ResolutionResult],
+        transcript_segments: list[dict[str, Any]],
+    ) -> None:
+        """Stage F: Extract name hints from transcript via regex."""
+        try:
+            from audioscript.speakers.transcript_hints import extract_name_hints, match_hints_to_speakers
+
+            hints = extract_name_hints(transcript_segments)
+            if not hints:
+                return
+
+            grouped = match_hints_to_speakers(hints, transcript_segments)
+
+            for result in results:
+                label = result.local_label
+                # Self-introductions: name refers to this speaker
+                speaker_hints = grouped.get(label, [])
+                for hint in speaker_hints:
+                    result.candidate_names.append({
+                        "name": hint.name,
+                        "score": hint.confidence,
+                        "source": f"transcript_{hint.pattern}",
+                    })
+
+                    self.db.add_evidence(SpeakerEvidence(
+                        evidence_id=generate_id("ev_"),
+                        speaker_cluster_id=result.speaker_cluster_id,
+                        type="transcript_hint",
+                        score=hint.confidence,
+                        summary=f"Transcript hint: '{hint.name}' via {hint.pattern} at {hint.timestamp:.1f}s",
+                        details={"pattern": hint.pattern, "timestamp": hint.timestamp},
+                        created_at=now_iso(),
+                    ))
+
+            logger.info("Stage F: Found %d name hints in transcript", len(hints))
+        except Exception as e:
+            logger.debug("Stage F transcript hints failed: %s", e)
+
+    def _stage_g_aggregate_confidence(self, results: list[ResolutionResult]) -> None:
+        """Stage G: Re-score confidence using all evidence sources.
+
+        Aggregate: 0.5*embedding + 0.3*calendar + 0.2*transcript
+        Only upgrades status, never downgrades confirmed speakers.
+        """
+        for result in results:
+            if result.status == "confirmed":
+                continue  # Don't re-score confirmed speakers
+
+            embedding_score = result.confidence if result.source == "db_match" else 0.0
+
+            # Best calendar candidate score
+            cal_scores = [c["score"] for c in result.candidate_names if c.get("source") == "calendar_attendee"]
+            calendar_score = max(cal_scores) if cal_scores else 0.0
+
+            # Best transcript candidate score
+            tx_scores = [c["score"] for c in result.candidate_names if "transcript" in c.get("source", "")]
+            transcript_score = max(tx_scores) if tx_scores else 0.0
+
+            # Weighted aggregate
+            aggregate = (
+                0.5 * embedding_score
+                + 0.3 * calendar_score
+                + 0.2 * transcript_score
+            )
+
+            if aggregate > result.confidence:
+                result.confidence = aggregate
+                new_status = self._apply_confidence_bands(aggregate)
+                # Only upgrade status
+                status_order = ["unknown", "candidate", "probable", "confirmed"]
+                if status_order.index(new_status) > status_order.index(result.status):
+                    result.status = new_status
+                    result.source = "aggregate"
 
     def _apply_confidence_bands(self, score: float) -> str:
         """Map a confidence score to a status (PRD §6)."""

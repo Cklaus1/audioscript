@@ -215,3 +215,86 @@ def speakers_merge(
         "total_calls": data_a["total_calls"],
         "total_minutes": round(data_a["total_speaking_seconds"] / 60, 1),
     })
+
+
+@speakers_app.command("enroll")
+def speakers_enroll(
+    ctx: typer.Context,
+    name: str = typer.Argument(help="Speaker name to enroll"),
+    sample: Path = typer.Argument(help="Path to voice sample audio file"),
+    db: Optional[str] = typer.Option(None, "--db", help="Path to speaker identity DB"),
+    hf_token: Optional[str] = typer.Option(None, "--hf-token", help="HuggingFace token"),
+) -> None:
+    """Enroll a speaker from a voice sample.
+
+    Example: audioscript speakers enroll Chris voice_sample.wav
+    """
+    import os
+    cli: CLIContext = ctx.obj
+    identity_db = _get_db(db)
+
+    if not sample.exists():
+        emit_error(cli, ExitCode.VALIDATION_ERROR, "validation", f"Sample file not found: {sample}")
+        return
+
+    token = hf_token or os.environ.get("HF_TOKEN")
+    if not token:
+        emit_error(
+            cli, ExitCode.AUTH_ERROR, "auth",
+            "HuggingFace token required for enrollment (diarization).",
+            hint="Set HF_TOKEN env var or pass --hf-token.",
+        )
+        return
+
+    try:
+        from audioscript.speakers.enrollment import SpeakerEnrollment
+        enrollment = SpeakerEnrollment(identity_db)
+        cluster_id = enrollment.enroll_from_audio(name, sample, hf_token=token)
+
+        emit(cli, "speakers.enroll", {
+            "name": name,
+            "cluster_id": cluster_id,
+            "sample": str(sample),
+            "status": "confirmed",
+        })
+    except Exception as e:
+        emit_error(cli, ExitCode.TRANSCRIPTION_ERROR, "enrollment", str(e))
+
+
+@speakers_app.command("split")
+def speakers_split(
+    ctx: typer.Context,
+    cluster_id: str = typer.Argument(help="Speaker cluster ID to split"),
+    db: Optional[str] = typer.Option(None, "--db", help="Path to speaker identity DB"),
+) -> None:
+    """Split a polluted cluster by detecting embedding outliers.
+
+    When diarization incorrectly merges two different voices into one cluster,
+    use this to separate them based on embedding distance from the centroid.
+    """
+    cli: CLIContext = ctx.obj
+    identity_db = _get_db(db)
+
+    identity = identity_db.get_identity(cluster_id)
+    if not identity:
+        emit_error(cli, ExitCode.VALIDATION_ERROR, "validation", f"Cluster not found: {cluster_id}")
+        return
+
+    if identity.total_calls < 2:
+        emit_error(
+            cli, ExitCode.VALIDATION_ERROR, "validation",
+            f"Cluster {cluster_id} has only {identity.total_calls} call(s) — need at least 2 to split.",
+        )
+        return
+
+    # For now, report the cluster info and suggest manual review
+    # Full automatic split (embedding outlier detection) requires stored per-occurrence embeddings
+    # which we don't persist yet — that's a future enhancement
+    emit(cli, "speakers.split", {
+        "cluster_id": cluster_id,
+        "name": identity.canonical_name,
+        "total_calls": identity.total_calls,
+        "status": "manual_review_needed",
+        "hint": "Automatic split requires per-occurrence embedding storage (future feature). "
+                "Use 'speakers merge' to manually reassign after creating new clusters.",
+    })
