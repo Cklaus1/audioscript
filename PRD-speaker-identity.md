@@ -141,42 +141,86 @@ Every identity decision should be explainable.
 
 ---
 
-## 4. Resolution Pipeline (AudioScript sync)
+## 4. Resolution Pipeline
+
+### AudioScript Stages (built in Phase 1, runs during sync)
 
 ```
-Stage A: Diarization
+Stage A: Diarization ✅ BUILT
   audio → speaker segments with local labels (SPEAKER_00, SPEAKER_01)
 
-Stage B: Embedding extraction
+Stage B: Embedding extraction ✅ BUILT
   per-speaker centroid from representative segments
 
-Stage C: Existing speaker DB match
+Stage C: Existing speaker DB match ✅ BUILT
   cosine similarity against known SpeakerIdentity records
   high match → attach existing speaker_cluster_id
   medium match → attach as tentative candidate
   no match → create new unknown speaker_cluster_id
 
-Stage D: Cross-call stitching
+Stage D: Cross-call stitching ✅ BUILT
   unknown voice matches unknown from prior calls → merge into same cluster
   no name required — just stable linkage
 
-Stage E: Calendar join
-  attach event metadata, attendees, recurring series
-  creates identity candidates (not finalizations)
+Stage E: Calendar join (AudioScript Phase 2)
+  timestamp → calendar event lookup (Google Calendar / Outlook API)
+  attach: event_id, attendees, organizer, recurring_series_id
+  generate identity candidates from attendee list
+  deterministic, fast, no LLM needed
+  AudioScript does the LOOKUP — stores structured data on CallRecord
 
-Stage F: Transcript/entity inference (lightweight)
+Stage F: Transcript/entity inference (AudioScript Phase 2, lightweight)
   "Hey Chris", "This is Dana from Acme", self-introductions
-  creates candidate evidence, not direct writes
+  regex/pattern-based extraction, creates candidate evidence
+  NOT LLM-based — just string matching for obvious self-introductions
 
-Stage G: Confidence scoring
+Stage G: Confidence scoring (AudioScript Phase 2)
   aggregate: embedding + calendar + transcript + recurrence + prior confirmations
 
-Stage H: Decision
+Stage H: Decision ✅ BUILT (confidence bands)
   auto-confirm if strong enough (see §6)
   mark probable if decent but not safe
   leave unknown if weak
   create review item if valuable or ambiguous
 ```
+
+### DeepScript Stages (runs later, consumes AudioScript output)
+
+```
+Stage I: Deep identity reasoning
+  LLM analyzes transcript for role/name clues beyond regex
+  "This person discusses server infrastructure → likely an engineer"
+  Consumes speaker_cluster_id from AudioScript
+
+Stage J: Cross-call behavioral inference
+  "spk_a91f always discusses budgets → likely a finance person"
+  "spk_a91f appears in all 6 Tuesday vendor syncs where Dana is invited"
+  Pattern analysis across multiple calls
+
+Stage K: Importance ranking
+  Which unknown speakers matter most?
+  Strategic relevance scoring based on call topics + frequency
+
+Stage L: Relationship/role deduction
+  Build relationship graph: who talks to whom, about what
+  Org chart inference from meeting patterns
+
+Stage M: Calendar + conversation cross-analysis
+  Deep reasoning over calendar patterns + transcript content
+  "This recurring meeting always has 3 speakers, but only 2 are on the invite"
+```
+
+### The Split
+
+| What | AudioScript | DeepScript |
+|------|-------------|------------|
+| Calendar event lookup | ✅ Timestamp → event match, store attendees | |
+| Attendee → candidate generation | ✅ Simple: "Chris was on invite, unknown speaker might be Chris" | |
+| Calendar pattern reasoning | | ✅ "Chris is on all 6 recurring syncs, this voice matches 5/6" |
+| Transcript name extraction (regex) | ✅ "Hey Chris", "I'm Dana from Acme" | |
+| Transcript role inference (LLM) | | ✅ "Discusses server logs → likely SRE" |
+| Confidence scoring (aggregate) | ✅ Combine embedding + calendar + regex scores | |
+| Deep behavioral inference | | ✅ Cross-call patterns, importance, relationships |
 
 ---
 
@@ -383,31 +427,41 @@ CREATE TABLE speaker_review_queue (
 
 ## 13. Implementation Phases
 
-### Phase 1 (AudioScript v0.3)
-- Speaker DB match in sync pipeline
-- Stable unknown speaker IDs (spk_xxxx)
-- Occurrence storage per call
-- Calendar timestamp storage
-- Update existing SpeakerDatabase class
+### Phase 1 (AudioScript v0.3) — ✅ BUILT
+- ✅ SpeakerIdentityDB (cluster-based, JSON, atomic writes)
+- ✅ SpeakerResolutionEngine (stages A-D: diarize → embed → match → stitch)
+- ✅ Stable unknown speaker IDs (spk_xxxx) across calls
+- ✅ Occurrence + evidence trail storage per call
+- ✅ Confidence bands (0.92 confirm, 0.80 probable, 0.60 candidate)
+- ✅ Co-speaker tracking
+- ✅ UnknownSpeakerReporter (priority-scored review queue)
+- ✅ CLI: `speakers list`, `summary`, `label`, `merge`
+- ✅ Graceful fallback to legacy SpeakerDatabase
+- ✅ V1→V2 migration
+- ✅ 360 tests passing
 
-### Phase 2
-- Calendar join (event → attendees → candidates)
-- Candidate generation from calendar + transcript
-- Confidence scoring (embedding + calendar + transcript)
-- Review queue generation
+### Phase 2 (AudioScript — calendar + lightweight transcript)
+- CalendarJoiner: timestamp → event lookup (Google Calendar / Outlook API)
+- Store calendar_event_id, attendees, organizer, recurring_series_id on CallRecord
+- Candidate generation from attendee list (deterministic, no LLM)
+- Transcript name extraction via regex ("Hey Chris", "I'm Dana from Acme")
+- Aggregate confidence scoring (embedding + calendar + transcript)
+- Enhanced review queue with calendar-backed candidates
 
-### Phase 3
-- Post-hoc labeling flow (CLI: `audioscript speakers label spk_a91f "Chris"`)
-- Merge/split tools
-- Unknown speaker summary report
-- Enrollment workflow improvements
+### Phase 3 (AudioScript — enrollment + management)
+- Enrollment workflow: `audioscript speakers enroll "Chris" --sample voice.wav`
+- Split polluted clusters
+- Unknown speaker summary report (periodic, in sync output)
+- Speaker export to MiNotes properties
 
-### Phase 4 (DeepScript)
-- LLM-based identity reasoning
+### Phase 4 (DeepScript — deep reasoning)
+- LLM-based identity inference (role, org, relationship)
+- Cross-call behavioral analysis ("always discusses budgets")
+- Calendar pattern reasoning ("on all 6 recurring Tuesday syncs")
+- Importance ranking (which unknowns matter most?)
 - Relationship graph
-- Org/person-role inference
-- Strategic meeting analysis
 - Cross-project speaker intelligence
+- Ambiguous-speaker review workflows with evidence presentation
 
 ---
 

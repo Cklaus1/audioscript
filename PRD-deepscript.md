@@ -9,22 +9,44 @@
 
 ## 1. Why a Separate Tool
 
-AudioScript is an **audio → text** pipeline (Whisper, diarization, output formatting).
-DeepScript is a **text → intelligence** engine (classification, coaching, insights, relationship analysis).
+AudioScript is an **audio → text + identity** pipeline (faster-whisper, diarization, speaker identity, calendar join, output formatting).
+DeepScript is a **text → intelligence** engine (classification, coaching, insights, relationship analysis, deep identity reasoning).
 
 | Concern | AudioScript | DeepScript |
 |---------|-------------|------------|
 | Input | Audio files | Any transcript (AudioScript, Zoom, Otter, manual) |
-| Dependencies | torch, whisper, pyannote (~10GB) | LLM APIs, regex, nltk (~50MB) |
+| Speaker identity | Cluster linking, embedding match, calendar lookup, review queue | LLM inference, relationship graphs, importance ranking |
+| Calendar | Event lookup, attendee extraction (deterministic) | Pattern reasoning across recurring series |
+| Dependencies | torch, faster-whisper, pyannote (~10GB) | LLM APIs, regex, nltk (~50MB) |
 | Iteration speed | Slow (model changes are rare) | Fast (new prompts, frameworks weekly) |
 | Install profile | Heavy (GPU-dependent) | Light (API keys or local LLM) |
 | Core value | Accurate transcription | Actionable intelligence |
 
 ```
-pip install audioscript                    # Transcription only
-pip install deepscript                     # Analysis only (works on any transcript)
+pip install audioscript                    # Transcription + speaker identity + sync
+pip install deepscript                     # Analysis + deep identity reasoning
 pip install audioscript[deepscript]        # Full pipeline
 ```
+
+### Speaker Identity Split (see PRD-speaker-identity.md)
+
+```
+AudioScript (fast operational layer)        DeepScript (deeper reasoning layer)
+┌─────────────────────────────┐           ┌─────────────────────────────────┐
+│ Diarization (pyannote)       │           │ LLM identity inference          │
+│ Embedding extraction         │           │ "discusses budgets → finance"   │
+│ Cosine similarity matching   │           │                                 │
+│ Stable spk_xxxx cluster IDs  │──────────→│ Cross-call behavioral analysis  │
+│ Cross-call stitching         │  speaker  │ "appears in all Tuesday syncs"  │
+│ Calendar event lookup        │  cluster  │                                 │
+│ Attendee → candidate gen     │    IDs    │ Importance ranking              │
+│ Regex name extraction        │           │ Relationship/role graphs        │
+│ Confidence scoring           │           │ Ambiguous-speaker workflows     │
+│ Review queue generation      │           │ Cross-project intelligence      │
+└─────────────────────────────┘           └─────────────────────────────────┘
+```
+
+**Principle:** AudioScript links voices reliably. DeepScript figures out who they probably are and whether it matters.
 
 **Integration:** AudioScript calls DeepScript as a post-processing step (if installed):
 ```yaml
@@ -302,21 +324,64 @@ deepscript/
 
 ### Input Format
 
-DeepScript accepts any transcript as JSON:
+DeepScript accepts any transcript as JSON. AudioScript outputs enriched transcripts with stable speaker identities:
+
 ```json
 {
   "text": "full text...",
   "language": "en",
+  "backend": "faster-whisper",
   "segments": [
-    {"start": 0.0, "end": 2.5, "text": "Hello", "speaker": "Alice"}
-  ]
+    {
+      "start": 0.0, "end": 2.5, "text": "Hello everyone",
+      "speaker": "Alice",
+      "speaker_cluster_id": "spk_a91f",
+      "speaker_confidence": 0.94
+    },
+    {
+      "start": 2.5, "end": 5.0, "text": "Thanks for joining",
+      "speaker": "spk_31bc",
+      "speaker_cluster_id": "spk_31bc",
+      "speaker_confidence": 0.0
+    }
+  ],
+  "diarization": {
+    "num_speakers": 2,
+    "speakers_resolved": [
+      {
+        "local_label": "SPEAKER_00",
+        "speaker_cluster_id": "spk_a91f",
+        "display_name": "Alice",
+        "status": "confirmed",
+        "confidence": 0.94,
+        "source": "db_match",
+        "is_new": false
+      },
+      {
+        "local_label": "SPEAKER_01",
+        "speaker_cluster_id": "spk_31bc",
+        "display_name": null,
+        "status": "unknown",
+        "confidence": 1.0,
+        "source": "auto_cluster",
+        "is_new": true
+      }
+    ]
+  },
+  "metadata": {
+    "audio": {"duration_seconds": 134.7, "creation_time": "2026-03-25T16:13:54Z"},
+    "file": {"name": "Recording (203).m4a", "size_human": "3.2 MB"}
+  }
 }
 ```
 
-This is exactly what AudioScript outputs. But it also works with:
-- Zoom transcript exports (convert to this format)
-- Otter.ai exports
-- Any diarized transcript
+**Key:** `speaker_cluster_id` is stable across calls. DeepScript uses it to:
+- Track the same person across multiple transcripts
+- Build per-speaker behavioral profiles
+- Correlate with calendar attendees for identity inference
+- Generate cross-call relationship graphs
+
+Also works with non-AudioScript transcripts (Zoom, Otter) — those just won't have `speaker_cluster_id`.
 
 ### CLI
 
@@ -623,7 +688,8 @@ class CallEpisode:
     call_type: str                      # "sales-discovery", "investor-pitch", etc.
     source_file: str                    # Audio file path
     duration_seconds: float
-    speakers: list[str]
+    speakers: list[dict]               # [{cluster_id, display_name, status, confidence}]
+    speaker_cluster_ids: list[str]     # ["spk_a91f", "spk_31bc"] — stable across calls
     classification_confidence: float
 
     # Analysis outcome
