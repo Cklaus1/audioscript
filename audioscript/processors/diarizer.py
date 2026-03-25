@@ -1,5 +1,7 @@
 """Speaker diarization using pyannote-audio."""
 
+from __future__ import annotations
+
 import json
 import logging
 import os
@@ -7,11 +9,24 @@ from collections import defaultdict
 from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional, Union
 
-import numpy as np
-import torch
-import torchaudio
+# Lazy imports — heavy ML dependencies only loaded when diarization is used
+np = None  # type: ignore
+torch = None  # type: ignore
+torchaudio = None  # type: ignore
 
 logger = logging.getLogger(__name__)
+
+
+def _ensure_diarizer_imports() -> None:
+    """Import numpy/torch/torchaudio on first use."""
+    global np, torch, torchaudio
+    if np is None:
+        import numpy as _np
+        import torch as _torch
+        import torchaudio as _ta
+        np = _np
+        torch = _torch
+        torchaudio = _ta
 
 from audioscript.config.settings import DEFAULT_DIARIZATION_MODEL, DEFAULT_VAD_MODEL
 
@@ -146,6 +161,7 @@ class SpeakerDiarizer:
         segmentation_batch_size: Optional[int] = None,
         embedding_batch_size: Optional[int] = None,
     ):
+        _ensure_diarizer_imports()
         self.hf_token = hf_token or os.environ.get("HF_TOKEN")
         if not self.hf_token:
             raise ValueError(

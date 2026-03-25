@@ -133,87 +133,25 @@ def speakers_merge(
     cli: CLIContext = ctx.obj
     identity_db = _get_db(db)
 
-    id_a = identity_db.get_identity(cluster_a)
-    id_b = identity_db.get_identity(cluster_b)
-
-    if not id_a:
+    if not identity_db.get_identity(cluster_a):
         emit_error(cli, ExitCode.VALIDATION_ERROR, "validation", f"Cluster not found: {cluster_a}")
         return
-    if not id_b:
+    if not identity_db.get_identity(cluster_b):
         emit_error(cli, ExitCode.VALIDATION_ERROR, "validation", f"Cluster not found: {cluster_b}")
         return
 
-    # Merge B into A: update A's data, repoint B's occurrences
-    data_a = identity_db.data["identities"][cluster_a]
-    data_b = identity_db.data["identities"][cluster_b]
+    success = identity_db.merge_clusters(cluster_a, cluster_b)
+    if not success:
+        emit_error(cli, ExitCode.INTERNAL_ERROR, "merge", "Merge operation failed")
+        return
 
-    # Merge centroid (weighted average)
-    n_a = data_a["sample_count"]
-    n_b = data_b["sample_count"]
-    if data_a["embedding_centroid"] and data_b["embedding_centroid"]:
-        merged_centroid = [
-            (a * n_a + b * n_b) / (n_a + n_b)
-            for a, b in zip(data_a["embedding_centroid"], data_b["embedding_centroid"])
-        ]
-        data_a["embedding_centroid"] = merged_centroid
-
-    data_a["sample_count"] = n_a + n_b
-    data_a["total_calls"] = data_a.get("total_calls", 0) + data_b.get("total_calls", 0)
-    data_a["total_speaking_seconds"] = (
-        data_a.get("total_speaking_seconds", 0) + data_b.get("total_speaking_seconds", 0)
-    )
-
-    # Keep earliest first_seen, latest last_seen
-    if data_b.get("first_seen", "") < data_a.get("first_seen", "z"):
-        data_a["first_seen"] = data_b["first_seen"]
-    if data_b.get("last_seen", "") > data_a.get("last_seen", ""):
-        data_a["last_seen"] = data_b["last_seen"]
-
-    # Merge co-speakers
-    co = set(data_a.get("typical_co_speakers", []) + data_b.get("typical_co_speakers", []))
-    co.discard(cluster_a)
-    co.discard(cluster_b)
-    data_a["typical_co_speakers"] = list(co)
-
-    # Merge aliases
-    aliases = set(data_a.get("aliases", []))
-    if data_b.get("canonical_name"):
-        aliases.add(data_b["canonical_name"])
-    aliases.update(data_b.get("aliases", []))
-    data_a["aliases"] = list(aliases)
-
-    # Repoint occurrences
-    for occ in identity_db.data["occurrences"]:
-        if occ.get("speaker_cluster_id") == cluster_b:
-            occ["speaker_cluster_id"] = cluster_a
-
-    # Repoint evidence
-    for ev in identity_db.data["evidence"]:
-        if ev.get("speaker_cluster_id") == cluster_b:
-            ev["speaker_cluster_id"] = cluster_a
-
-    # Remove B
-    del identity_db.data["identities"][cluster_b]
-
-    # Add merge evidence
-    from audioscript.speakers.models import SpeakerEvidence, generate_id, now_iso
-    identity_db.add_evidence(SpeakerEvidence(
-        evidence_id=generate_id("ev_"),
-        speaker_cluster_id=cluster_a,
-        type="manual_merge",
-        score=1.0,
-        summary=f"Merged {cluster_b} into {cluster_a}",
-        created_at=now_iso(),
-    ))
-
-    identity_db.save()
-
+    merged = identity_db.get_identity(cluster_a)
     emit(cli, "speakers.merge", {
         "kept": cluster_a,
         "merged": cluster_b,
-        "name": data_a.get("canonical_name"),
-        "total_calls": data_a["total_calls"],
-        "total_minutes": round(data_a["total_speaking_seconds"] / 60, 1),
+        "name": merged.canonical_name if merged else None,
+        "total_calls": merged.total_calls if merged else 0,
+        "total_minutes": round(merged.total_speaking_seconds / 60, 1) if merged else 0,
     })
 
 

@@ -193,7 +193,10 @@ class MiNotesExporter:
             return {}
 
     def _update_state(self, name: str, path: Path) -> None:
-        """Update the sync state file."""
+        """Update the sync state file atomically."""
+        import os as _os
+        import tempfile as _tf
+
         state = self._load_state()
         state[name] = {
             "path": str(path),
@@ -201,4 +204,14 @@ class MiNotesExporter:
         }
         state_file = self.sync_dir / ".audioscript_sync_state.json"
         state_file.parent.mkdir(parents=True, exist_ok=True)
-        state_file.write_text(json.dumps(state, indent=2))
+        fd, tmp_path = _tf.mkstemp(dir=state_file.parent, prefix=".state_", suffix=".tmp")
+        try:
+            with _os.fdopen(fd, "w") as f:
+                json.dump(state, f, indent=2)
+            _os.replace(tmp_path, state_file)
+        except BaseException:
+            try:
+                _os.unlink(tmp_path)
+            except OSError:
+                pass
+            raise

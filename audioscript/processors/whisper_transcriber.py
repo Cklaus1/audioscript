@@ -7,9 +7,22 @@ import logging
 from pathlib import Path
 from typing import Any
 
-import torch
-import whisper
-from whisper.utils import get_writer
+# Lazy imports — these are heavy (~10GB) and only needed when this backend is used
+torch = None  # type: ignore
+whisper = None  # type: ignore
+get_writer = None  # type: ignore
+
+
+def _ensure_whisper_imports() -> None:
+    """Import torch/whisper on first use."""
+    global torch, whisper, get_writer
+    if torch is None:
+        import torch as _torch
+        import whisper as _whisper
+        from whisper.utils import get_writer as _get_writer
+        torch = _torch
+        whisper = _whisper
+        get_writer = _get_writer
 
 from audioscript.processors.backend_protocol import (
     TranscriberBackend,
@@ -36,6 +49,8 @@ class WhisperTranscriber(TranscriberBackend):
         device: str | None = None,
         download_root: str | None = None,
     ):
+        _ensure_whisper_imports()
+
         if model_name is None:
             model_name = self.TIER_TO_MODEL.get(tier, "base")
 

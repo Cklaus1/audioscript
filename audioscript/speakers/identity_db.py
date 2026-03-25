@@ -9,6 +9,7 @@ Storage: JSON file with atomic writes (same pattern as ProcessingManifest).
 
 from __future__ import annotations
 
+import fcntl
 import json
 import logging
 import math
@@ -72,24 +73,32 @@ class SpeakerIdentityDB:
             return {"version": self.VERSION, "identities": {}, "occurrences": [], "evidence": []}
 
     def save(self) -> None:
-        """Persist to disk atomically (write to temp, then rename)."""
+        """Persist to disk atomically with file locking."""
         self.db_path.parent.mkdir(parents=True, exist_ok=True)
 
-        fd, tmp_path = tempfile.mkstemp(
-            dir=self.db_path.parent,
-            prefix=".speaker_id_",
-            suffix=".tmp",
-        )
+        lock_path = self.db_path.with_suffix(".lock")
+        lock_fd = os.open(str(lock_path), os.O_CREAT | os.O_RDWR)
         try:
-            with os.fdopen(fd, "w") as f:
-                json.dump(self.data, f, indent=2, default=str)
-            os.replace(tmp_path, self.db_path)
-        except BaseException:
+            fcntl.flock(lock_fd, fcntl.LOCK_EX)
+
+            fd, tmp_path = tempfile.mkstemp(
+                dir=self.db_path.parent,
+                prefix=".speaker_id_",
+                suffix=".tmp",
+            )
             try:
-                os.unlink(tmp_path)
-            except OSError:
-                pass
-            raise
+                with os.fdopen(fd, "w") as f:
+                    json.dump(self.data, f, indent=2, default=str)
+                os.replace(tmp_path, self.db_path)
+            except BaseException:
+                try:
+                    os.unlink(tmp_path)
+                except OSError:
+                    pass
+                raise
+        finally:
+            fcntl.flock(lock_fd, fcntl.LOCK_UN)
+            os.close(lock_fd)
 
     # --- Core Matching ---
 
@@ -162,7 +171,7 @@ class SpeakerIdentityDB:
             created_at=now,
         ))
 
-        self.save()
+        # Note: caller should call save() after batch operations
         logger.info("Created speaker cluster %s from %s", cluster_id, local_label)
         return cluster_id
 
@@ -187,9 +196,9 @@ class SpeakerIdentityDB:
 
         # Status upgrade (never downgrade)
         if status:
-            status_order = ["unknown", "candidate", "probable", "confirmed"]
+            _STATUS_RANK = {"unknown": 0, "candidate": 1, "probable": 2, "confirmed": 3}
             current = identity.get("status", "unknown")
-            if status_order.index(status) > status_order.index(current):
+            if _STATUS_RANK.get(status, -1) > _STATUS_RANK.get(current, -1):
                 identity["status"] = status
 
         # Incremental centroid averaging
@@ -211,15 +220,14 @@ class SpeakerIdentityDB:
             identity.get("total_speaking_seconds", 0) + speaking_seconds
         )
         identity["updated_at"] = now
-
-        self.save()
+        # Note: caller should call save() after batch operations
 
     # --- Occurrence Tracking ---
 
     def add_occurrence(self, occurrence: SpeakerOccurrence) -> None:
         """Record a speaker appearance in a call."""
         self.data["occurrences"].append(occurrence.to_dict())
-        self.save()
+        # Note: caller should call save() after batch operations
 
     # --- Evidence Trail ---
 
@@ -384,6 +392,77 @@ class SpeakerIdentityDB:
 
         logger.info("Migrated %d speakers to v2 format", len(new_data["identities"]))
         return new_data
+
+    def merge_clusters(self, keep_id: str, merge_id: str) -> bool:
+        """Merge two speaker clusters. The merge_id cluster is absorbed into keep_id.
+
+        Combines embeddings (weighted average), speaking stats, co-speakers,
+        aliases. Repoints all occurrences and evidence. Removes merged cluster.
+        """
+        data_a = self.data["identities"].get(keep_id)
+        data_b = self.data["identities"].get(merge_id)
+        if not data_a or not data_b:
+            return False
+
+        # Merge centroid (weighted average)
+        n_a = data_a["sample_count"]
+        n_b = data_b["sample_count"]
+        if data_a["embedding_centroid"] and data_b["embedding_centroid"]:
+            data_a["embedding_centroid"] = [
+                (a * n_a + b * n_b) / (n_a + n_b)
+                for a, b in zip(data_a["embedding_centroid"], data_b["embedding_centroid"])
+            ]
+
+        data_a["sample_count"] = n_a + n_b
+        data_a["total_calls"] = data_a.get("total_calls", 0) + data_b.get("total_calls", 0)
+        data_a["total_speaking_seconds"] = (
+            data_a.get("total_speaking_seconds", 0) + data_b.get("total_speaking_seconds", 0)
+        )
+
+        if data_b.get("first_seen", "") < data_a.get("first_seen", "z"):
+            data_a["first_seen"] = data_b["first_seen"]
+        if data_b.get("last_seen", "") > data_a.get("last_seen", ""):
+            data_a["last_seen"] = data_b["last_seen"]
+
+        # Merge co-speakers
+        co = set(data_a.get("typical_co_speakers", []) + data_b.get("typical_co_speakers", []))
+        co.discard(keep_id)
+        co.discard(merge_id)
+        data_a["typical_co_speakers"] = list(co)
+
+        # Merge aliases
+        aliases = set(data_a.get("aliases", []))
+        if data_b.get("canonical_name"):
+            aliases.add(data_b["canonical_name"])
+        aliases.update(data_b.get("aliases", []))
+        data_a["aliases"] = list(aliases)
+
+        data_a["updated_at"] = now_iso()
+
+        # Repoint occurrences and evidence
+        for occ in self.data["occurrences"]:
+            if occ.get("speaker_cluster_id") == merge_id:
+                occ["speaker_cluster_id"] = keep_id
+        for ev in self.data["evidence"]:
+            if ev.get("speaker_cluster_id") == merge_id:
+                ev["speaker_cluster_id"] = keep_id
+
+        # Remove merged cluster
+        del self.data["identities"][merge_id]
+
+        # Add merge evidence
+        self.add_evidence(SpeakerEvidence(
+            evidence_id=generate_id("ev_"),
+            speaker_cluster_id=keep_id,
+            type="manual_merge",
+            score=1.0,
+            summary=f"Merged {merge_id} into {keep_id}",
+            created_at=now_iso(),
+        ))
+
+        self.save()
+        logger.info("Merged %s into %s", merge_id, keep_id)
+        return True
 
     def migrate_from_v1(self, old_db_path: Path) -> int:
         """Explicitly migrate an old v1 speakers.json file."""

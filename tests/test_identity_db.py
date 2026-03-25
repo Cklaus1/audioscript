@@ -30,7 +30,8 @@ class TestCreateCluster:
             )
             assert cid.startswith("spk_")
             assert len(db.data["identities"]) == 1
-            # Verify it was saved to disk
+            # Caller must save explicitly (batch pattern)
+            db.save()
             db2 = SpeakerIdentityDB(db_path)
             assert cid in db2.data["identities"]
 

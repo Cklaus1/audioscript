@@ -219,7 +219,8 @@ class SpeakerResolutionEngine:
             status = "confirmed"
         elif existing_status == "confirmed":
             # Strong existing identity, moderate new match — keep as probable
-            status = max(status, "probable", key=lambda s: ["unknown", "candidate", "probable", "confirmed"].index(s))
+            _rank = {"unknown": 0, "candidate": 1, "probable": 2, "confirmed": 3}
+            status = max(status, "probable", key=lambda s: _rank.get(s, -1))
 
         # Update cluster with new data + status upgrade
         self.db.update_cluster(best_id, embedding, call_id, speaking_secs, status=status)
@@ -401,8 +402,8 @@ class SpeakerResolutionEngine:
                 result.confidence = aggregate
                 new_status = self._apply_confidence_bands(aggregate)
                 # Only upgrade status
-                status_order = ["unknown", "candidate", "probable", "confirmed"]
-                if status_order.index(new_status) > status_order.index(result.status):
+                _rank = {"unknown": 0, "candidate": 1, "probable": 2, "confirmed": 3}
+                if _rank.get(new_status, -1) > _rank.get(result.status, -1):
                     result.status = new_status
                     result.source = "aggregate"
 

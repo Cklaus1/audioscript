@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import glob
-import multiprocessing
 import os
 import sys
 from pathlib import Path
@@ -41,61 +40,39 @@ class _TimeoutError(Exception):
     pass
 
 
-def _worker_fn(
-    audio_file: str,
-    settings_dict: dict[str, Any],
-    manifest_path: str,
-    result_queue: multiprocessing.Queue,  # type: ignore[type-arg]
-) -> None:
-    """Worker function for process-based timeout and concurrency."""
-    try:
-        from audioscript.config.settings import AudioScriptConfig
-        settings = AudioScriptConfig(**settings_dict)
-        manifest = ProcessingManifest(Path(manifest_path))
-        processor = AudioProcessor(settings, manifest)
-        success = processor.process_file(Path(audio_file))
-        result_queue.put(("ok", success))
-    except Exception as e:
-        result_queue.put(("error", str(e)))
-
-
 def _run_with_timeout(
     func: Any, timeout_seconds: int,
 ) -> tuple[Any, Exception | None]:
-    """Run func() in a subprocess with a hard timeout.
+    """Run func() in a thread with a timeout.
 
-    Uses multiprocessing so the worker can actually be terminated,
-    unlike the old thread-based approach.
+    Note: Thread-based timeout cannot forcefully kill GPU operations,
+    but it does report the timeout correctly. The thread may continue
+    running in the background until the operation completes naturally.
+    This is acceptable for per-file timeouts where the operation will
+    eventually finish.
     """
-    ctx = multiprocessing.get_context("spawn")
-    result_queue: multiprocessing.Queue[Any] = ctx.Queue()
+    import threading
 
-    def wrapper(q: multiprocessing.Queue) -> None:  # type: ignore[type-arg]
+    result_holder: list[Any] = [None]
+    error_holder: list[Exception | None] = [None]
+
+    def target() -> None:
         try:
-            result = func()
-            q.put(("ok", result))
+            result_holder[0] = func()
         except Exception as e:
-            q.put(("error", e))
+            error_holder[0] = e
 
-    proc = ctx.Process(target=wrapper, args=(result_queue,))
-    proc.start()
-    proc.join(timeout=timeout_seconds)
+    thread = threading.Thread(target=target, daemon=True)
+    thread.start()
+    thread.join(timeout=timeout_seconds)
 
-    if proc.is_alive():
-        proc.terminate()
-        proc.join(timeout=5)
-        if proc.is_alive():
-            proc.kill()
-            proc.join(timeout=2)
+    if thread.is_alive():
         return None, _TimeoutError(f"Processing exceeded {timeout_seconds}s timeout")
 
-    if result_queue.empty():
-        return None, RuntimeError("Worker process exited without result")
+    if error_holder[0]:
+        return None, error_holder[0]
 
-    status, payload = result_queue.get_nowait()
-    if status == "error":
-        return None, payload if isinstance(payload, Exception) else RuntimeError(str(payload))
-    return payload, None
+    return result_holder[0], None
 
 
 @transcribe_app.command(name="transcribe", hidden=True)

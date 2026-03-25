@@ -6,6 +6,7 @@ import fnmatch
 import json
 import logging
 import os
+import tempfile
 import time
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -49,9 +50,21 @@ class FileDiscovery:
             return {}
 
     def _save_cache(self) -> None:
-        """Persist the cache to disk."""
+        """Persist the cache to disk atomically."""
         self.cache_path.parent.mkdir(parents=True, exist_ok=True)
-        self.cache_path.write_text(json.dumps(self._cache, indent=2))
+        fd, tmp_path = tempfile.mkstemp(
+            dir=self.cache_path.parent, prefix=".sync_cache_", suffix=".tmp",
+        )
+        try:
+            with os.fdopen(fd, "w") as f:
+                json.dump(self._cache, f, indent=2)
+            os.replace(tmp_path, self.cache_path)
+        except BaseException:
+            try:
+                os.unlink(tmp_path)
+            except OSError:
+                pass
+            raise
 
     def scan(
         self,
@@ -136,12 +149,13 @@ class FileDiscovery:
                     f.read(1024)
                 entry.status = "local"
                 local.append(entry)
+            except PermissionError:
+                # Must be before OSError (PermissionError is a subclass)
+                entry.status = "error"
+                logger.warning("Permission denied: %s", entry.path)
             except OSError:
                 entry.status = "cloud"
                 cloud.append(entry)
-            except PermissionError:
-                entry.status = "error"
-                logger.warning("Permission denied: %s", entry.path)
 
         return local, cloud
 

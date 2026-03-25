@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import fcntl
 import hashlib
 import json
 import logging
@@ -79,24 +80,48 @@ class ProcessingManifest:
             return {"version": "1.1", "files": {}}
 
     def save(self) -> None:
-        """Save the manifest atomically (write to temp, then rename)."""
+        """Save the manifest atomically with file locking.
+
+        Uses fcntl.flock to prevent concurrent writers from clobbering
+        each other's updates. Writes to temp file then renames.
+        """
         self.manifest_path.parent.mkdir(parents=True, exist_ok=True)
 
-        fd, tmp_path = tempfile.mkstemp(
-            dir=self.manifest_path.parent,
-            prefix=".manifest_",
-            suffix=".tmp",
-        )
+        lock_path = self.manifest_path.with_suffix(".lock")
+        lock_fd = os.open(str(lock_path), os.O_CREAT | os.O_RDWR)
         try:
-            with os.fdopen(fd, "w") as f:
-                json.dump(self.data, f, indent=2)
-            os.replace(tmp_path, self.manifest_path)
-        except BaseException:
+            fcntl.flock(lock_fd, fcntl.LOCK_EX)
+
+            # Reload from disk to get any concurrent updates before merging
+            if self.manifest_path.exists():
+                try:
+                    with open(self.manifest_path, "r") as f:
+                        disk_data = json.load(f)
+                    # Merge: our in-memory changes take precedence
+                    for file_hash, file_data in self.data.get("files", {}).items():
+                        disk_data.setdefault("files", {})[file_hash] = file_data
+                    self.data = disk_data
+                except (json.JSONDecodeError, OSError):
+                    pass  # Corrupt file — our in-memory data wins
+
+            fd, tmp_path = tempfile.mkstemp(
+                dir=self.manifest_path.parent,
+                prefix=".manifest_",
+                suffix=".tmp",
+            )
             try:
-                os.unlink(tmp_path)
-            except OSError:
-                pass
-            raise
+                with os.fdopen(fd, "w") as f:
+                    json.dump(self.data, f, indent=2)
+                os.replace(tmp_path, self.manifest_path)
+            except BaseException:
+                try:
+                    os.unlink(tmp_path)
+                except OSError:
+                    pass
+                raise
+        finally:
+            fcntl.flock(lock_fd, fcntl.LOCK_UN)
+            os.close(lock_fd)
 
     def is_processed(self, file_hash: str, tier: str, version: str) -> bool:
         """Check if a file has been processed at the given tier and version."""

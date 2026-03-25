@@ -208,15 +208,33 @@ class FasterWhisperTranscriber(TranscriberBackend):
         )
 
     def detect_language(self, audio_path: str | Path) -> dict[str, Any]:
-        """Detect the language of an audio file."""
+        """Detect the language of an audio file without full transcription."""
         self.load_model()
 
         if isinstance(audio_path, Path):
             audio_path = str(audio_path)
 
-        _, info = self.model.transcribe(audio_path, task="transcribe")
+        # Use detect_language_multi_segment for efficiency (no full transcription)
+        try:
+            info = self.model.detect_language(audio_path)
+            # Returns list of (language, probability) tuples
+            if info:
+                best_lang, best_prob = info[0]
+                return {
+                    "language": best_lang,
+                    "language_probability": best_prob,
+                    "all_probabilities": dict(info[:10]),
+                }
+        except (AttributeError, TypeError):
+            pass
+
+        # Fallback: transcribe first segment only
+        segments, info = self.model.transcribe(audio_path, task="transcribe")
+        # Consume just the first segment to release resources
+        for _ in segments:
+            break
 
         return {
-            "language": info.language,
-            "language_probability": info.language_probability,
+            "language": info.language if hasattr(info, "language") else "",
+            "language_probability": info.language_probability if hasattr(info, "language_probability") else 0.0,
         }
