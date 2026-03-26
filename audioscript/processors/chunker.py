@@ -232,6 +232,25 @@ def merge_chunk_analyses(
                 seen_names.add(name.lower())
                 all_speakers.append(s)
 
+    # Per-chunk details for DeepScript (preserves topic timeline)
+    chunk_details = []
+    for chunk, analysis in zip(chunks, chunk_analyses):
+        chunk_details.append({
+            "chunk_id": chunk.chunk_id,
+            "start_time": chunk.start_time,
+            "end_time": chunk.end_time,
+            "duration_seconds": chunk.end_time - chunk.start_time,
+            "speaker_labels": chunk.speaker_labels,
+            "title": analysis.get("title"),
+            "summary": analysis.get("summary"),
+            "classification": analysis.get("classification"),
+            "topics": analysis.get("topics", []),
+            "action_items": analysis.get("action_items", []),
+            "speakers_identified": [
+                s.get("likely_name") for s in analysis.get("speakers", []) if s.get("likely_name")
+            ],
+        })
+
     return {
         "title": combined_title,
         "summary": combined_summary,
@@ -243,4 +262,5 @@ def merge_chunk_analyses(
         "questions_raised": all_questions,
         "chunked": True,
         "chunk_count": len(chunk_analyses),
+        "chunks": chunk_details,  # Per-chunk details for DeepScript topic timeline
     }

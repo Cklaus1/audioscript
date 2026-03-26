@@ -383,6 +383,40 @@ DeepScript accepts any transcript as JSON. AudioScript outputs enriched transcri
 
 Also works with non-AudioScript transcripts (Zoom, Otter) — those just won't have `speaker_cluster_id`.
 
+### Chunked Transcripts (Long Recordings)
+
+AudioScript automatically chunks recordings >80K chars (~30+ minutes) into ~30-minute segments at natural pause points. The `llm_analysis` field contains:
+
+```json
+{
+  "chunked": true,
+  "chunk_count": 5,
+  "title": "Wealth Management and Trust Strategy Meeting",
+  "summary": "Combined summary from all chunks...",
+  "chunks": [
+    {
+      "chunk_id": 0,
+      "start_time": 0.0,
+      "end_time": 1800.0,
+      "title": "Economic Outlook and Interest Rate Risks",
+      "summary": "Discussion of macro environment...",
+      "topics": ["interest rates", "recession risk"],
+      "action_items": [{"text": "Review bond allocation", "assignee": "Chris"}],
+      "speakers_identified": ["Chris", "Ryan"]
+    },
+    {
+      "chunk_id": 1,
+      "start_time": 1800.0,
+      "end_time": 3600.0,
+      "title": "Trust Restructuring Options",
+      ...
+    }
+  ]
+}
+```
+
+**DeepScript should treat chunks as topic segments within ONE call, not separate calls.** The `chunks` array provides a natural topic timeline — each chunk's title acts as a topic heading for that time range. This is exactly the "Topics Index" feature from PRD-sync.md §3.3 — AudioScript produces it automatically for long recordings via chunking.
+
 ### CLI
 
 ```bash
@@ -691,6 +725,13 @@ class CallEpisode:
     speakers: list[dict]               # [{cluster_id, display_name, status, confidence}]
     speaker_cluster_ids: list[str]     # ["spk_a91f", "spk_31bc"] — stable across calls
     classification_confidence: float
+
+    # Chunking (for long recordings >80K chars)
+    chunked: bool = False             # True if transcript was split for LLM analysis
+    chunk_count: int = 1
+    chunks: list[dict] | None = None  # Per-chunk: start_time, end_time, title, summary, topics, actions
+    # DeepScript should treat chunks as topic segments within ONE call, not separate calls
+    # The chunks.title field acts as a topic heading for that time range
 
     # Analysis outcome
     methodology_score: dict | None      # MEDDIC: {metrics: 2, econ_buyer: 1, ...}
