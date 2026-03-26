@@ -327,16 +327,46 @@ class AudioProcessor:
                         cost_log = output_dir / ".audioscript_llm_costs.jsonl"
                         tracker = CostTracker(cost_log)
 
-                        llm_analysis = analyze_transcript(
-                            transcript_text=result_dict.get("text", ""),
-                            segments=result_dict.get("segments"),
-                            metadata=result_dict.get("metadata"),
-                            model=self.settings.llm_model,
-                            provider=self.settings.llm_provider,
-                            base_url=self.settings.llm_base_url,
-                            call_id=file_hash,
-                            cost_tracker=tracker,
-                        )
+                        # Check if transcript needs chunking (long files)
+                        text_len = len(result_dict.get("text", ""))
+                        segments = result_dict.get("segments", [])
+
+                        if text_len > 80_000 and segments:
+                            # Chunk and analyze per-chunk, then merge
+                            from audioscript.processors.chunker import chunk_transcript, merge_chunk_analyses
+                            chunks = chunk_transcript(segments, target_minutes=30, max_chars=80_000)
+                            self.console.print(f"  Chunked into {len(chunks)} parts ({text_len} chars)")
+
+                            chunk_results = []
+                            for chunk in chunks:
+                                chunk_analysis = analyze_transcript(
+                                    transcript_text=chunk.text,
+                                    segments=chunk.segments,
+                                    metadata=result_dict.get("metadata"),
+                                    model=self.settings.llm_model,
+                                    provider=self.settings.llm_provider,
+                                    base_url=self.settings.llm_base_url,
+                                    call_id=f"{file_hash}_chunk{chunk.chunk_id}",
+                                    cost_tracker=tracker,
+                                )
+                                if chunk_analysis:
+                                    chunk_results.append(chunk_analysis)
+
+                            if chunk_results:
+                                llm_analysis = merge_chunk_analyses(chunks, chunk_results)
+                            else:
+                                llm_analysis = None
+                        else:
+                            llm_analysis = analyze_transcript(
+                                transcript_text=result_dict.get("text", ""),
+                                segments=segments,
+                                metadata=result_dict.get("metadata"),
+                                model=self.settings.llm_model,
+                                provider=self.settings.llm_provider,
+                                base_url=self.settings.llm_base_url,
+                                call_id=file_hash,
+                                cost_tracker=tracker,
+                            )
 
                         if llm_analysis:
                             result_dict = apply_llm_results(result_dict, llm_analysis)

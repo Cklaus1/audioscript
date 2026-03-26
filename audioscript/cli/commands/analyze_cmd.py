@@ -139,17 +139,43 @@ def analyze(
             return {"file": json_path.name, "status": "error", "error": str(e)}
 
         default_model = {"anthropic": "claude-sonnet-4-6", "nim": "qwen/qwen3-next-80b-a3b-instruct", "openai": "gpt-4o"}.get(effective_provider, "claude-sonnet-4-6")
-        llm_result = analyze_transcript(
-            transcript_text=data.get("text", ""),
-            segments=data.get("segments"),
-            metadata=data.get("metadata"),
-            model=model or default_model,
-            api_key=effective_key,
-            cost_tracker=cost_tracker,
-            call_id=json_path.stem,
-            provider=effective_provider,
-            base_url=base_url,
-        )
+        effective_model = model or default_model
+
+        text_len = len(data.get("text", ""))
+        segments = data.get("segments", [])
+
+        if text_len > 80_000 and segments:
+            # Chunk long transcripts and analyze per-chunk
+            from audioscript.processors.chunker import chunk_transcript, merge_chunk_analyses
+            chunks = chunk_transcript(segments, target_minutes=30, max_chars=80_000)
+            chunk_results = []
+            for chunk in chunks:
+                ca = analyze_transcript(
+                    transcript_text=chunk.text,
+                    segments=chunk.segments,
+                    metadata=data.get("metadata"),
+                    model=effective_model,
+                    api_key=effective_key,
+                    cost_tracker=cost_tracker,
+                    call_id=f"{json_path.stem}_chunk{chunk.chunk_id}",
+                    provider=effective_provider,
+                    base_url=base_url,
+                )
+                if ca:
+                    chunk_results.append(ca)
+            llm_result = merge_chunk_analyses(chunks, chunk_results) if chunk_results else None
+        else:
+            llm_result = analyze_transcript(
+                transcript_text=data.get("text", ""),
+                segments=segments,
+                metadata=data.get("metadata"),
+                model=effective_model,
+                api_key=effective_key,
+                cost_tracker=cost_tracker,
+                call_id=json_path.stem,
+                provider=effective_provider,
+                base_url=base_url,
+            )
 
         if not llm_result:
             return {"file": json_path.name, "status": "no_result"}
