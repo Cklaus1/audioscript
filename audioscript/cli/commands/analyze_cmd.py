@@ -38,10 +38,16 @@ def analyze(
         help="Regenerate .md files from enriched JSON",
     ),
     model: Optional[str] = typer.Option(
-        None, "--model", help="Claude model (default: claude-sonnet-4-6)",
+        None, "--model", help="LLM model (default: claude-sonnet-4-6)",
+    ),
+    provider: Optional[str] = typer.Option(
+        None, "--provider", help="LLM provider: anthropic, openai, nim",
+    ),
+    base_url: Optional[str] = typer.Option(
+        None, "--base-url", help="Base URL for OpenAI/NIM endpoint",
     ),
     api_key: Optional[str] = typer.Option(
-        None, "--api-key", help="Anthropic API key (or set ANTHROPIC_API_KEY env)",
+        None, "--api-key", help="API key (or set ANTHROPIC_API_KEY / NVIDIA_API_KEY env)",
     ),
 ) -> None:
     """Re-run LLM analysis on existing transcript JSONs.
@@ -54,12 +60,21 @@ def analyze(
     """
     cli: CLIContext = ctx.obj
 
-    effective_key = api_key or os.environ.get("ANTHROPIC_API_KEY")
+    effective_provider = provider or "anthropic"
+    effective_key = api_key
     if not effective_key:
+        if effective_provider == "anthropic":
+            effective_key = os.environ.get("ANTHROPIC_API_KEY")
+        elif effective_provider == "nim":
+            effective_key = os.environ.get("NVIDIA_API_KEY")
+        else:
+            effective_key = os.environ.get("OPENAI_API_KEY")
+    if not effective_key:
+        env_var = {"anthropic": "ANTHROPIC_API_KEY", "nim": "NVIDIA_API_KEY", "openai": "OPENAI_API_KEY"}.get(effective_provider, "API_KEY")
         emit_error(
             cli, ExitCode.AUTH_ERROR, "auth",
-            "Anthropic API key required for LLM analysis.",
-            hint="Set ANTHROPIC_API_KEY env var or pass --api-key.",
+            f"{env_var} required for LLM analysis with {effective_provider} provider.",
+            hint=f"Set {env_var} env var, pass --api-key, or use --provider to switch.",
         )
         return
 
@@ -119,14 +134,17 @@ def analyze(
         except (json.JSONDecodeError, OSError) as e:
             return {"file": json_path.name, "status": "error", "error": str(e)}
 
+        default_model = {"anthropic": "claude-sonnet-4-6", "nim": "qwen/qwen3.5-122b-a10b", "openai": "gpt-4o"}.get(effective_provider, "claude-sonnet-4-6")
         llm_result = analyze_transcript(
             transcript_text=data.get("text", ""),
             segments=data.get("segments"),
             metadata=data.get("metadata"),
-            model=model or "claude-sonnet-4-6",
+            model=model or default_model,
             api_key=effective_key,
             cost_tracker=cost_tracker,
             call_id=json_path.stem,
+            provider=effective_provider,
+            base_url=base_url,
         )
 
         if not llm_result:
