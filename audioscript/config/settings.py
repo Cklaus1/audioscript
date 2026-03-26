@@ -117,7 +117,7 @@ class AudioScriptConfig(BaseModel):
 
     # LLM analysis options
     llm_analysis: bool = Field(default=True)
-    llm_model: str = Field(default="claude-sonnet-4-6")
+    llm_model: str = Field(default="claude-sonnet-4-6")  # NIM default: qwen/qwen3-next-80b-a3b-instruct
     llm_provider: str = Field(default="anthropic")  # "anthropic" | "openai" | "nim"
     llm_base_url: str | None = Field(default=None)  # For openai/nim: http://localhost:8000/v1
     nim_rate_limit: int = Field(default=40)  # Max requests per minute for NIM API

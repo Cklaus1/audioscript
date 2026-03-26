@@ -134,7 +134,7 @@ def analyze(
         except (json.JSONDecodeError, OSError) as e:
             return {"file": json_path.name, "status": "error", "error": str(e)}
 
-        default_model = {"anthropic": "claude-sonnet-4-6", "nim": "qwen/qwen3.5-122b-a10b", "openai": "gpt-4o"}.get(effective_provider, "claude-sonnet-4-6")
+        default_model = {"anthropic": "claude-sonnet-4-6", "nim": "qwen/qwen3-next-80b-a3b-instruct", "openai": "gpt-4o"}.get(effective_provider, "claude-sonnet-4-6")
         llm_result = analyze_transcript(
             transcript_text=data.get("text", ""),
             segments=data.get("segments"),

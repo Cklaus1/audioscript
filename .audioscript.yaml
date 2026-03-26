@@ -5,8 +5,10 @@
 output_dir: "./output"
 tier: "draft"                    # draft (fast), balanced (turbo), high_quality (large-v3)
 
-# LLM analysis — set ANTHROPIC_API_KEY env var to enable AI summaries, titles, action items
-# llm_model: "claude-sonnet-4-6"  # claude-sonnet-4-6 (default), claude-haiku-4-5-20251001 (cheaper)
+# LLM analysis — set API key env var to enable AI summaries, titles, action items
+# Provider options: anthropic (ANTHROPIC_API_KEY), nim (NVIDIA_API_KEY), openai (OPENAI_API_KEY)
+# llm_provider: "nim"
+# llm_model: "qwen/qwen3-next-80b-a3b-instruct"  # 6x faster than Claude, best speaker ID
 
 # Speaker diarization — set HF_TOKEN env var to enable
 # diarize: true
