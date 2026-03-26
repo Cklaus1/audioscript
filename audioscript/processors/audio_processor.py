@@ -485,9 +485,28 @@ class AudioProcessor:
                             created_at=now_iso(),
                         ))
 
-                        # Upgrade to candidate if currently unknown
+                        # Upgrade status based on evidence consensus
                         identity = identity_db.data["identities"].get(cluster_id, {})
-                        if identity.get("status") == "unknown":
+                        current_status = identity.get("status", "unknown")
+
+                        # Count how many LLM evidence records agree on this name
+                        llm_evidence = [
+                            e for e in identity_db.data.get("evidence", [])
+                            if e.get("speaker_cluster_id") == cluster_id
+                            and e.get("type") == "llm_inference"
+                            and e.get("details", {}).get("name", "").lower() == name.lower()
+                        ]
+
+                        if len(llm_evidence) >= 3 and current_status != "confirmed":
+                            # 3+ LLM calls agree on this name → auto-confirm
+                            identity["canonical_name"] = name
+                            identity["status"] = "confirmed"
+                            identity["updated_at"] = now_iso()
+                            logger.info("Auto-confirmed %s as '%s' (%d LLM agreements)", cluster_id, name, len(llm_evidence))
+                        elif len(llm_evidence) >= 2 and current_status in ("unknown", "candidate"):
+                            identity["status"] = "probable"
+                            identity["updated_at"] = now_iso()
+                        elif current_status == "unknown":
                             identity["status"] = "candidate"
                             identity["updated_at"] = now_iso()
 

@@ -80,8 +80,12 @@ def analyze(
 
     # Find JSON files
     json_files = glob.glob(input, recursive=True)
-    json_files = [f for f in json_files if f.endswith(".json") and "manifest" not in f
-                  and "speaker_identities" not in f and "sync_cache" not in f]
+    json_files = [f for f in json_files if f.endswith(".json")
+                  and "manifest" not in f
+                  and "speaker_identities" not in f
+                  and "sync_cache" not in f
+                  and ".embeddings." not in f
+                  and "llm_costs" not in f]
 
     if not json_files:
         emit_error(
