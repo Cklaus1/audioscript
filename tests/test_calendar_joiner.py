@@ -83,7 +83,7 @@ class TestCalendarJoiner:
     @patch("audioscript.speakers.calendar.subprocess.run")
     def test_is_available_true(self, mock_run):
         mock_run.return_value = MagicMock(
-            returncode=0, stdout='{"status":"logged_in"}', stderr=""
+            returncode=0, stdout="Logged in as Chris Klaus (cklaus@fusen.world)", stderr=""
         )
         joiner = self._make_joiner()
         assert joiner.is_available() is True
@@ -133,7 +133,7 @@ class TestCalendarJoiner:
         call_args = mock_run.call_args[0][0]
         assert "calendar" in call_args
         assert "view" in call_args
-        assert "--startDateTime" in call_args
+        assert "--start" in call_args
 
     # -- match_call --
 

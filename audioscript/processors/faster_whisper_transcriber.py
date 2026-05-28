@@ -154,6 +154,24 @@ class FasterWhisperTranscriber(TranscriberBackend):
             elif isinstance(clip_ts, list):
                 fw_kwargs["clip_timestamps"] = clip_ts
 
+        # Hotwords — boost recognition of specific names/terms
+        hotwords = kwargs.get("hotwords")
+        vocabulary_file = kwargs.get("vocabulary_file")
+        if vocabulary_file and not hotwords:
+            try:
+                from pathlib import Path as _Path
+                vf = _Path(vocabulary_file)
+                if vf.exists():
+                    hotwords = ", ".join(
+                        line.strip() for line in vf.read_text().splitlines()
+                        if line.strip() and not line.startswith("#")
+                    )
+            except Exception as e:
+                logger.warning("Failed to load vocabulary file %s: %s", vocabulary_file, e)
+        if hotwords:
+            fw_kwargs["hotwords"] = hotwords
+            logger.info("Hotwords: %s", hotwords[:100])
+
         # Consume the generator
         segments_gen, info = self.model.transcribe(audio_path, **fw_kwargs)
         raw_segments = list(segments_gen)

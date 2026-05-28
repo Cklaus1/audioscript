@@ -1,8 +1,25 @@
 {
   "permissions": {
     "allow": [
-      "Bash(mkdir:*)"
+      "Bash(mkdir:*)",
+      "WebFetch(domain:raw.githubusercontent.com)",
+      "WebFetch(domain:github.com)",
+      "WebFetch(domain:pypi.org)",
+      "WebFetch(domain:pyannote.github.io)",
+      "WebFetch(domain:docs.pyannote.ai)",
+      "WebSearch",
+      "WebFetch(domain:northflank.com)",
+      "WebFetch(domain:brasstranscripts.com)"
     ],
     "deny": []
-  }
+  },
+  "disabledMcpjsonServers": [
+    "btask",
+    "bflow",
+    "pipeboard-meta-ads",
+    "facebook-ads-library",
+    "ms365",
+    "msteams",
+    "posthog"
+  ]
 }

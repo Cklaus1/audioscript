@@ -235,6 +235,10 @@ class AudioProcessor:
                     "vad_filter": use_builtin_vad,
                 }
 
+                if self.settings.hotwords:
+                    transcribe_kwargs["hotwords"] = self.settings.hotwords
+                if self.settings.vocabulary_file:
+                    transcribe_kwargs["vocabulary_file"] = self.settings.vocabulary_file
                 if self.settings.hallucination_silence_threshold is not None:
                     transcribe_kwargs["hallucination_silence_threshold"] = (
                         self.settings.hallucination_silence_threshold

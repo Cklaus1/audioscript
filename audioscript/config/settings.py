@@ -71,6 +71,8 @@ class AudioScriptConfig(BaseModel):
     clip_timestamps: str | None = Field(default=None)
     carry_initial_prompt: bool = Field(default=False)
     condition_on_previous_text: bool = Field(default=True)
+    hotwords: str | None = Field(default=None, description="Comma-separated hotwords to boost recognition (e.g. 'Anuj Grover,Fusen World')")
+    vocabulary_file: str | None = Field(default=None, description="Path to file with one hotword/phrase per line")
 
     # Decode options
     suppress_tokens: str = Field(default="-1")

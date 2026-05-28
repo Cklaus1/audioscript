@@ -115,6 +115,8 @@ def transcribe(
     clip_timestamps: Optional[str] = typer.Option(None, "--clip-timestamps", help="Time ranges to process"),
     carry_initial_prompt: Optional[bool] = typer.Option(None, "--carry-initial-prompt", help="Carry prompt across windows"),
     condition_on_previous_text: Optional[bool] = typer.Option(None, "--condition-on-previous-text/--no-condition-on-previous-text", help="Use previous text as prompt"),
+    hotwords: Optional[str] = typer.Option(None, "--hotwords", help="Comma-separated hotwords to boost (e.g. 'Anuj Grover,Fusen World')"),
+    vocabulary_file: Optional[str] = typer.Option(None, "--vocabulary", help="Path to file with one hotword/phrase per line"),
     # --- Decode ---
     suppress_tokens: Optional[str] = typer.Option(None, "--suppress-tokens", help="Token IDs to suppress"),
     suppress_blank: Optional[bool] = typer.Option(None, "--suppress-blank", help="Suppress blanks"),
@@ -243,6 +245,7 @@ def transcribe(
         "beam_size": beam_size, "best_of": best_of, "clip_timestamps": clip_timestamps,
         "carry_initial_prompt": carry_initial_prompt,
         "condition_on_previous_text": condition_on_previous_text,
+        "hotwords": hotwords, "vocabulary_file": vocabulary_file,
         "suppress_tokens": suppress_tokens, "suppress_blank": suppress_blank,
         "fp16": fp16, "patience": patience, "length_penalty": length_penalty,
         "output_format": output_format, "highlight_words": highlight_words,

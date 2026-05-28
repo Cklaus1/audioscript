@@ -82,8 +82,16 @@ class CalendarJoiner:
         if not self._ms365_path:
             return False
         try:
-            result = self._run_ms365(["auth", "status", "--output", "json"])
-            return result is not None
+            cmd_parts = self._ms365_path.split()
+            cmd = cmd_parts + ["auth", "status"]
+            import os
+            cwd = os.path.dirname(os.path.dirname(_DEFAULT_MS365_PATH))
+            if not os.path.isdir(cwd):
+                cwd = None
+            result = subprocess.run(
+                cmd, capture_output=True, text=True, timeout=10, cwd=cwd,
+            )
+            return result.returncode == 0 and "Logged in" in result.stdout
         except Exception:
             return False
 
@@ -100,8 +108,8 @@ class CalendarJoiner:
         """
         result = self._run_ms365([
             "calendar", "view",
-            "--startDateTime", start,
-            "--endDateTime", end,
+            "--start", start,
+            "--end", end,
             "--output", "json",
         ])
 
@@ -128,7 +136,7 @@ class CalendarJoiner:
         Returns the best match (highest time overlap).
         """
         try:
-            start_dt = datetime.fromisoformat(call_start.replace("Z", "+00:00"))
+            start_dt = self._parse_dt(call_start)
         except (ValueError, TypeError):
             logger.warning("Cannot parse call start time: %s", call_start)
             return None
@@ -149,8 +157,8 @@ class CalendarJoiner:
 
         for event in events:
             try:
-                evt_start = datetime.fromisoformat(event.start_time.replace("Z", "+00:00"))
-                evt_end = datetime.fromisoformat(event.end_time.replace("Z", "+00:00"))
+                evt_start = self._parse_dt(event.start_time)
+                evt_end = self._parse_dt(event.end_time)
             except (ValueError, TypeError):
                 continue
 
@@ -209,6 +217,14 @@ class CalendarJoiner:
 
         return candidates
 
+    @staticmethod
+    def _parse_dt(dt_str: str) -> datetime:
+        """Parse datetime string, normalizing to UTC-aware."""
+        dt = datetime.fromisoformat(dt_str.replace("Z", "+00:00"))
+        if dt.tzinfo is None:
+            dt = dt.replace(tzinfo=timezone.utc)
+        return dt
+
     def _run_ms365(self, args: list[str]) -> Any:
         """Execute an ms365-cli command and return parsed JSON."""
         if not self._ms365_path:
@@ -217,17 +233,33 @@ class CalendarJoiner:
         cmd_parts = self._ms365_path.split()  # handles "node /path/index.js"
         cmd = cmd_parts + args
 
+        # Run from ms365-cli directory so it picks up its .env (client ID, tenant)
+        import os
+        cwd = os.path.dirname(os.path.dirname(_DEFAULT_MS365_PATH))  # /root/projects/ms365-cli
+        if not os.path.isdir(cwd):
+            cwd = None
+
         try:
             result = subprocess.run(
                 cmd,
-                capture_output=True, text=True, timeout=30,
+                capture_output=True, text=True, timeout=60,
+                cwd=cwd,
             )
+            if result.stdout.strip():
+                return json.loads(result.stdout)
             if result.returncode != 0:
                 logger.debug("ms365-cli error: %s", result.stderr[:200])
-                return None
-
-            return json.loads(result.stdout)
-        except (subprocess.TimeoutExpired, json.JSONDecodeError, FileNotFoundError) as e:
+            return None
+        except subprocess.TimeoutExpired as e:
+            # Try to parse partial output (large calendar responses may timeout)
+            if hasattr(e, 'stdout') and e.stdout:
+                try:
+                    return json.loads(e.stdout)
+                except (json.JSONDecodeError, TypeError):
+                    pass
+            logger.debug("ms365-cli timed out")
+            return None
+        except (json.JSONDecodeError, FileNotFoundError) as e:
             logger.debug("ms365-cli failed: %s", e)
             return None
 
