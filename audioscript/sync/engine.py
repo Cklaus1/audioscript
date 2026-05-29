@@ -220,43 +220,52 @@ class SyncEngine:
             )
             return report
 
-        self.console.print(
-            f"  {report.new} new files to transcribe"
-        )
+        # Process in batches until all files are done
+        batch_num = 0
+        while to_process:
+            batch_num += 1
+            batch_label = f" (batch {batch_num})" if batch_num > 1 else ""
+            self.console.print(
+                f"  {len(to_process)} new files to transcribe{batch_label}"
+            )
 
-        # Apply batch size
-        batch_size = self.sync_config.batch_size
-        if batch_size > 0:
-            to_process = to_process[:batch_size]
+            # Apply batch size
+            batch_size = self.sync_config.batch_size
+            if batch_size > 0:
+                to_process = to_process[:batch_size]
 
-        # Stage to local filesystem if needed
-        staged_dir = None
-        if self._is_slow_filesystem(resolved):
-            staged_dir, to_process = self._stage_files(to_process)
+            # Stage to local filesystem if needed
+            staged_dir = None
+            if self._is_slow_filesystem(resolved):
+                staged_dir, to_process = self._stage_files(to_process)
 
-        # Transcribe
-        processor = AudioProcessor(settings, manifest, self.console)
+            # Transcribe
+            processor = AudioProcessor(settings, manifest, self.console)
 
-        for i, entry in enumerate(to_process):
-            success = processor.process_file(entry.path)
-            result = {
-                "file": str(entry.path.name),
-                "status": "completed" if success else "failed",
-            }
-            report.results.append(result)
+            for i, entry in enumerate(to_process):
+                success = processor.process_file(entry.path)
+                result = {
+                    "file": str(entry.path.name),
+                    "status": "completed" if success else "failed",
+                }
+                report.results.append(result)
 
-            if success:
-                report.transcribed += 1
-            else:
-                report.failed += 1
+                if success:
+                    report.transcribed += 1
+                else:
+                    report.failed += 1
 
-            # Delay between files
-            if self.sync_config.delay_between > 0 and i < len(to_process) - 1:
-                time.sleep(self.sync_config.delay_between)
+                # Delay between files
+                if self.sync_config.delay_between > 0 and i < len(to_process) - 1:
+                    time.sleep(self.sync_config.delay_between)
 
-        # Clean up staging
-        if staged_dir and self.sync_config.onedrive.cleanup_staging:
-            shutil.rmtree(staged_dir, ignore_errors=True)
+            # Clean up staging
+            if staged_dir and self.sync_config.onedrive.cleanup_staging:
+                shutil.rmtree(staged_dir, ignore_errors=True)
+
+            # Re-scan for remaining files (manifest updated, hashes recomputed)
+            local = discovery.compute_hashes(local)
+            to_process = discovery.diff_against_manifest(local, manifest, tier, version)
 
         self.console.print(
             f"  Done: {report.transcribed} transcribed, {report.failed} failed"
