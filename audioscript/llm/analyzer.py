@@ -170,6 +170,12 @@ def _call_openai_compatible(
     """
     import openai
 
+    # Local servers (vLLM / ollama) run reasoning models such as Qwen with "thinking"
+    # on by default: the model spends the whole max_tokens budget reasoning and returns
+    # an empty answer, which then fails JSON parsing. Turn it off for on-box endpoints.
+    # Hosted APIs reject unknown body fields, so only send it to loopback servers.
+    extra = _local_extra_body(str(getattr(client, "base_url", "") or ""))
+
     response = None
     for attempt in range(max_retries):
         try:
@@ -180,6 +186,7 @@ def _call_openai_compatible(
                     {"role": "system", "content": SYSTEM_PROMPT},
                     {"role": "user", "content": user_message},
                 ],
+                **({"extra_body": extra} if extra else {}),
             )
             break
         except openai.RateLimitError:
@@ -193,11 +200,34 @@ def _call_openai_compatible(
     if response is None:
         raise RuntimeError("No response from OpenAI-compatible API")
 
-    text = response.choices[0].message.content.strip()
+    text = _strip_thinking(response.choices[0].message.content or "")
     usage = response.usage
     input_tokens = usage.prompt_tokens if usage else 0
     output_tokens = usage.completion_tokens if usage else 0
     return text, input_tokens, output_tokens
+
+
+_LOOPBACK_HOSTS = {"localhost", "127.0.0.1", "::1"}
+
+
+def _local_extra_body(base_url: str) -> dict[str, Any] | None:
+    """Extra request body for on-box OpenAI-compatible servers; None for hosted APIs."""
+    from urllib.parse import urlparse
+
+    try:
+        host = urlparse(base_url).hostname or ""
+    except ValueError:
+        return None
+    if host in _LOOPBACK_HOSTS:
+        return {"chat_template_kwargs": {"enable_thinking": False}}
+    return None
+
+
+def _strip_thinking(text: str) -> str:
+    """Drop a leading <think>...</think> block some local models emit before the answer."""
+    import re
+
+    return re.sub(r"^\s*<think>.*?</think>\s*", "", text, count=1, flags=re.DOTALL).strip()
 
 
 def analyze_transcript(

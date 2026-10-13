@@ -5,10 +5,12 @@
 output_dir: "./output"
 tier: "draft"                    # draft (fast), balanced (turbo), high_quality (large-v3)
 
-# LLM analysis — set API key env var to enable AI summaries, titles, action items
-# Provider options: anthropic (ANTHROPIC_API_KEY), nim (NVIDIA_API_KEY), openai (OPENAI_API_KEY)
-# llm_provider: "nim"
-# llm_model: "qwen/qwen3-next-80b-a3b-instruct"  # 6x faster than Claude, best speaker ID
+# LLM analysis — LOCAL AI ONLY (owner decision 2026-10-12): transcripts must never go to a
+# cloud provider (anthropic / nim). Summaries run on the on-box vLLM server (op-stack).
+# Without these lines AudioScript falls back to llm_provider "anthropic".
+llm_provider: "openai"                      # OpenAI-compatible protocol, served locally
+llm_base_url: "http://localhost:11435/v1"   # on-box vLLM
+llm_model: "Qwen/Qwen3.5-4B"
 
 # Speaker diarization — set HF_TOKEN env var to enable
 # diarize: true
