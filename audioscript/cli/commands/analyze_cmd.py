@@ -38,7 +38,7 @@ def analyze(
         help="Regenerate .md files from enriched JSON",
     ),
     model: Optional[str] = typer.Option(
-        None, "--model", help="LLM model (default: claude-sonnet-4-6)",
+        None, "--model", help="LLM model (default: local Qwen/Qwen3.5-4B)",
     ),
     provider: Optional[str] = typer.Option(
         None, "--provider", help="LLM provider: anthropic, openai, nim",
@@ -60,8 +60,15 @@ def analyze(
     """
     cli: CLIContext = ctx.obj
 
-    effective_provider = provider or "anthropic"
+    # Local AI by default (owner decision 2026-10-12); cloud providers are opt-in.
+    effective_provider = provider or "openai"
+    if effective_provider == "openai" and not base_url:
+        base_url = "http://localhost:11435/v1"
+    from audioscript.llm.analyzer import _local_extra_body
+
     effective_key = api_key
+    if not effective_key and effective_provider != "anthropic" and _local_extra_body(base_url or ""):
+        effective_key = "local"  # on-box servers accept any key
     if not effective_key:
         if effective_provider == "anthropic":
             effective_key = os.environ.get("ANTHROPIC_API_KEY")
@@ -138,7 +145,7 @@ def analyze(
         except (json.JSONDecodeError, OSError) as e:
             return {"file": json_path.name, "status": "error", "error": str(e)}
 
-        default_model = {"anthropic": "claude-sonnet-4-6", "nim": "qwen/qwen3-next-80b-a3b-instruct", "openai": "gpt-4o"}.get(effective_provider, "claude-sonnet-4-6")
+        default_model = {"anthropic": "claude-sonnet-4-6", "nim": "qwen/qwen3-next-80b-a3b-instruct", "openai": "Qwen/Qwen3.5-4B"}.get(effective_provider, "Qwen/Qwen3.5-4B")
         effective_model = model or default_model
 
         text_len = len(data.get("text", ""))

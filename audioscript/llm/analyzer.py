@@ -266,6 +266,8 @@ def analyze_transcript(
         Structured analysis dict, or None on failure.
     """
     resolved_key = _resolve_api_key(provider, api_key)
+    if not resolved_key and provider != "anthropic" and _local_extra_body(base_url or ""):
+        resolved_key = "local"  # on-box OpenAI-compatible servers accept any key
     if not resolved_key:
         env_hint = {
             "anthropic": "ANTHROPIC_API_KEY",

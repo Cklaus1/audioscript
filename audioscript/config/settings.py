@@ -119,9 +119,13 @@ class AudioScriptConfig(BaseModel):
 
     # LLM analysis options
     llm_analysis: bool = Field(default=True)
-    llm_model: str = Field(default="claude-sonnet-4-6")  # NIM default: qwen/qwen3-next-80b-a3b-instruct
-    llm_provider: str = Field(default="anthropic")  # "anthropic" | "openai" | "nim"
-    llm_base_url: str | None = Field(default=None)  # For openai/nim: http://localhost:8000/v1
+    # LOCAL AI BY DEFAULT (owner decision 2026-10-12): transcripts are analysed by an on-box
+    # model unless a cloud provider is chosen explicitly (llm_provider: anthropic|nim, or a
+    # non-local llm_base_url). With provider "openai" and no base URL the SDK would call
+    # api.openai.com, so the local endpoint is part of the default.
+    llm_model: str = Field(default="Qwen/Qwen3.5-4B")
+    llm_provider: str = Field(default="openai")  # "openai" (OpenAI-compatible) | "anthropic" | "nim"
+    llm_base_url: str | None = Field(default="http://localhost:11435/v1")  # on-box vLLM
     nim_rate_limit: int = Field(default=40)  # Max requests per minute for NIM API
 
     @field_validator("output_format")

@@ -321,10 +321,15 @@ class AudioProcessor:
                     from audioscript.llm.cost_tracker import CostTracker
                     import os
 
+                    from audioscript.llm.analyzer import _local_extra_body
+
                     has_llm_key = (
                         os.environ.get("ANTHROPIC_API_KEY")
                         or os.environ.get("OPENAI_API_KEY")
                         or os.environ.get("NVIDIA_API_KEY")
+                        # an on-box endpoint needs no cloud key
+                        or (self.settings.llm_provider != "anthropic"
+                            and _local_extra_body(self.settings.llm_base_url or ""))
                     )
                     if self.settings.llm_analysis and has_llm_key:
                         self.console.print(f"LLM analysis: {file_path.name}")
