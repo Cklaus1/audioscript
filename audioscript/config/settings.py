@@ -127,6 +127,10 @@ class AudioScriptConfig(BaseModel):
     llm_provider: str = Field(default="openai")  # "openai" (OpenAI-compatible) | "anthropic" | "nim"
     llm_base_url: str | None = Field(default="http://localhost:11435/v1")  # on-box vLLM
     nim_rate_limit: int = Field(default=40)  # Max requests per minute for NIM API
+    # Transcripts longer than this are summarised in chunks and the chunk analyses merged.
+    # 36k characters (~9-10k tokens) leaves room for the prompt and the answer inside the
+    # local model's 16k-token context; 80k overflowed it (owner's recordings, 2026-11).
+    llm_max_chunk_chars: int = Field(default=36_000, ge=4_000)
 
     @field_validator("output_format")
     @classmethod
