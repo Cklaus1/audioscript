@@ -127,11 +127,12 @@ class AudioScriptConfig(BaseModel):
     llm_provider: str = Field(default="openai")  # "openai" (OpenAI-compatible) | "anthropic" | "nim"
     llm_base_url: str | None = Field(default="http://localhost:11435/v1")  # on-box vLLM
     nim_rate_limit: int = Field(default=40)  # Max requests per minute for NIM API
-    # Transcripts longer than this are summarised in chunks and the chunk analyses merged.
-    # Each line is rendered as "[mm:ss] SPEAKER_NN: text", which about doubles the tokens.
-    # 12k characters measured <=10.2k prompt tokens, under the ~13.8k left in a 16k-token
-    # local model after the 2k-token answer and the system prompt (16k chars measured 13.0k).
-    llm_max_chunk_chars: int = Field(default=12_000, ge=4_000)
+    # Transcripts whose estimated prompt exceeds this many tokens are summarised in chunks
+    # and the chunk analyses merged. The estimate runs ~1.4x low on real speech (9k estimated
+    # measured up to 12.8k real); 7.5k estimated keeps every measured chunk (English
+    # and Korean) well under the ~13.8k left in a 16k-token local model after the 2k-token
+    # answer and the system prompt. Estimator: processors.chunker.estimate_segment_tokens.
+    llm_max_chunk_tokens: int = Field(default=7_500, ge=1_000)
 
     @field_validator("output_format")
     @classmethod

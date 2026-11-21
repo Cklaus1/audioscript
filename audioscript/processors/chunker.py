@@ -15,7 +15,7 @@ from __future__ import annotations
 
 import logging
 from dataclasses import dataclass, field
-from typing import Any
+from typing import Any, Callable
 
 logger = logging.getLogger(__name__)
 
@@ -61,18 +61,40 @@ def find_split_points(
     return splits
 
 
+def _is_wide(ch: str) -> bool:
+    o = ord(ch)
+    return (0x1100 <= o <= 0x11FF or 0x3040 <= o <= 0x30FF or 0x3130 <= o <= 0x318F
+            or 0x3400 <= o <= 0x4DBF or 0x4E00 <= o <= 0x9FFF or 0xAC00 <= o <= 0xD7AF
+            or 0xF900 <= o <= 0xFAFF or 0xFF00 <= o <= 0xFFEF)
+
+
+def estimate_segment_tokens(seg: dict[str, Any]) -> int:
+    """Conservative prompt-token estimate for one rendered line "[mm:ss] SPEAKER_NN: text".
+
+    Korean/Japanese/Chinese characters cost about one token each; other text about one per
+    three characters; the timestamp and speaker label about ten. A character cap alone let
+    Korean recordings overflow a 16k-token local model.
+    """
+    text = seg.get("text", "") or ""
+    wide = sum(1 for ch in text if _is_wide(ch))
+    return wide + (len(text) - wide + 2) // 3 + 10
+
+
 def chunk_transcript(
     segments: list[dict[str, Any]],
     target_minutes: float = DEFAULT_TARGET_CHUNK_MINUTES,
     max_chars: int = DEFAULT_MAX_CHUNK_CHARS,
     min_pause: float = DEFAULT_MIN_PAUSE_SECONDS,
+    size_fn: Callable[[dict[str, Any]], int] | None = None,
 ) -> list[TranscriptChunk]:
     """Split a transcript into chunks at natural break points.
 
     Args:
         segments: Transcript segments with start, end, text, speaker fields.
         target_minutes: Target chunk duration in minutes.
-        max_chars: Maximum characters per chunk (for LLM token limits).
+        max_chars: Maximum size per chunk, in characters, or in the units of size_fn.
+        size_fn: Size of one segment (default: its character count). Pass
+            estimate_segment_tokens to budget by prompt tokens.
         min_pause: Minimum pause to consider as a split point.
 
     Returns:
@@ -83,9 +105,11 @@ def chunk_transcript(
 
     total_duration = segments[-1].get("end", 0) - segments[0].get("start", 0)
     total_chars = sum(len(seg.get("text", "")) for seg in segments)
+    size = size_fn or (lambda seg: len(seg.get("text", "")))
+    total_size = sum(size(seg) for seg in segments)
 
     # No chunking needed for short transcripts
-    if total_duration < target_minutes * 60 * 1.5 and total_chars < max_chars:
+    if total_duration < target_minutes * 60 * 1.5 and total_size < max_chars:
         return [TranscriptChunk(
             chunk_id=0,
             start_time=segments[0].get("start", 0),
@@ -112,11 +136,13 @@ def chunk_transcript(
     chunks: list[TranscriptChunk] = []
     current_segments: list[dict[str, Any]] = []
     current_chars = 0
+    current_size = 0
     chunk_start = segments[0].get("start", 0)
     chunk_id = 0
 
     for seg in segments:
         seg_chars = len(seg.get("text", ""))
+        seg_size = size(seg)
         seg_mid = (seg.get("start", 0) + seg.get("end", 0)) / 2
         current_duration = seg.get("end", 0) - chunk_start
 
@@ -128,7 +154,7 @@ def chunk_transcript(
                 if chunk_start < split_time <= seg.get("start", 0):
                     should_split = True
                     break
-        if current_chars + seg_chars > max_chars:
+        if current_size + seg_size > max_chars:
             should_split = True
 
         if should_split and current_segments:
@@ -145,10 +171,12 @@ def chunk_transcript(
             chunk_id += 1
             current_segments = []
             current_chars = 0
+            current_size = 0
             chunk_start = seg.get("start", 0)
 
         current_segments.append(seg)
         current_chars += seg_chars
+        current_size += seg_size
 
     # Final chunk
     if current_segments:

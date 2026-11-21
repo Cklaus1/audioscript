@@ -40,8 +40,8 @@ def analyze(
     model: Optional[str] = typer.Option(
         None, "--model", help="LLM model (default: local Qwen/Qwen3.5-4B)",
     ),
-    max_chunk_chars: int = typer.Option(
-        12_000, "--max-chunk-chars", help="Summarise longer transcripts in chunks (fits a 16k-token local model)",
+    max_chunk_tokens: int = typer.Option(
+        7_500, "--max-chunk-tokens", help="Summarise transcripts over this many estimated prompt tokens in chunks (fits a 16k-token local model)",
     ),
     provider: Optional[str] = typer.Option(
         None, "--provider", help="LLM provider: anthropic, openai, nim",
@@ -154,10 +154,11 @@ def analyze(
         text_len = len(data.get("text", ""))
         segments = data.get("segments", [])
 
-        if text_len > max_chunk_chars and segments:
+        from audioscript.processors.chunker import estimate_segment_tokens
+        if segments and sum(estimate_segment_tokens(sg) for sg in segments) > max_chunk_tokens:
             # Chunk long transcripts and analyze per-chunk
             from audioscript.processors.chunker import chunk_transcript, merge_chunk_analyses
-            chunks = chunk_transcript(segments, target_minutes=30, max_chars=max_chunk_chars)
+            chunks = chunk_transcript(segments, target_minutes=30, max_chars=max_chunk_tokens, size_fn=estimate_segment_tokens)
             chunk_results = []
             for chunk in chunks:
                 ca = analyze_transcript(

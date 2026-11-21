@@ -230,7 +230,7 @@ def _strip_thinking(text: str) -> str:
     return re.sub(r"^\s*<think>.*?</think>\s*", "", text, count=1, flags=re.DOTALL).strip()
 
 
-def analyze_transcript(
+def _analyze_transcript_once(
     transcript_text: str,
     segments: list[dict[str, Any]] | None = None,
     metadata: dict[str, Any] | None = None,
@@ -358,6 +358,8 @@ def analyze_transcript(
                 response_text = response_text[:-3].strip()
 
         result = json.loads(response_text)
+        if not isinstance(result, dict):
+            raise json.JSONDecodeError("expected a JSON object", response_text, 0)
 
         logger.info(
             "LLM analysis complete (%s): title='%s', %d speakers, %d actions (%.1fs, %d+%d tokens)",
@@ -373,8 +375,7 @@ def analyze_transcript(
         return result
 
     except json.JSONDecodeError as e:
-        logger.warning("LLM returned invalid JSON: %s", e)
-        return None
+        raise _InvalidJson(str(e)) from e
     except Exception as e:
         error_msg = str(e)
         if resolved_key and resolved_key in error_msg:
@@ -486,3 +487,26 @@ def apply_llm_results(
         result_dict["questions_raised"] = llm_analysis["questions_raised"]
 
     return result_dict
+
+
+class _InvalidJson(Exception):
+    """The model answered, but not with a JSON object."""
+
+
+#: A small local model sometimes breaks the JSON of one answer; sampling a fresh answer
+#: usually fixes it. Other failures (context length, network) are not retried here.
+JSON_ATTEMPTS = 3
+
+
+def analyze_transcript(*args: Any, **kwargs: Any) -> dict[str, Any] | None:
+    """Analyze a transcript (see _analyze_transcript_once), retrying invalid-JSON answers."""
+    last = ""
+    for attempt in range(1, JSON_ATTEMPTS + 1):
+        try:
+            return _analyze_transcript_once(*args, **kwargs)
+        except _InvalidJson as e:
+            last = str(e)
+            if attempt < JSON_ATTEMPTS:
+                logger.info("LLM returned invalid JSON (attempt %d/%d), asking again", attempt, JSON_ATTEMPTS)
+    logger.warning("LLM returned invalid JSON %d times: %s", JSON_ATTEMPTS, last)
+    return None

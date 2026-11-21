@@ -340,11 +340,12 @@ class AudioProcessor:
                         text_len = len(result_dict.get("text", ""))
                         segments = result_dict.get("segments", [])
 
-                        max_chars = self.settings.llm_max_chunk_chars
-                        if text_len > max_chars and segments:
+                        from audioscript.processors.chunker import estimate_segment_tokens
+                        max_tokens = self.settings.llm_max_chunk_tokens
+                        if segments and sum(estimate_segment_tokens(sg) for sg in segments) > max_tokens:
                             # Chunk and analyze per-chunk, then merge
                             from audioscript.processors.chunker import chunk_transcript, merge_chunk_analyses
-                            chunks = chunk_transcript(segments, target_minutes=30, max_chars=max_chars)
+                            chunks = chunk_transcript(segments, target_minutes=30, max_chars=max_tokens, size_fn=estimate_segment_tokens)
                             self.console.print(f"  Chunked into {len(chunks)} parts ({text_len} chars)")
 
                             chunk_results = []
