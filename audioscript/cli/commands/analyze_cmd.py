@@ -41,7 +41,7 @@ def analyze(
         None, "--model", help="LLM model (default: local Qwen/Qwen3.5-4B)",
     ),
     max_chunk_chars: int = typer.Option(
-        36_000, "--max-chunk-chars", help="Summarise longer transcripts in chunks (fits a 16k-token local model)",
+        12_000, "--max-chunk-chars", help="Summarise longer transcripts in chunks (fits a 16k-token local model)",
     ),
     provider: Optional[str] = typer.Option(
         None, "--provider", help="LLM provider: anthropic, openai, nim",
@@ -174,6 +174,10 @@ def analyze(
                 if ca:
                     chunk_results.append(ca)
             llm_result = merge_chunk_analyses(chunks, chunk_results) if chunk_results else None
+            if llm_result is not None and len(chunk_results) < len(chunks):
+                # Say so when some chunks could not be analysed: the summary covers only part.
+                llm_result["partial"] = True
+                llm_result["chunks_failed"] = len(chunks) - len(chunk_results)
         else:
             llm_result = analyze_transcript(
                 transcript_text=data.get("text", ""),

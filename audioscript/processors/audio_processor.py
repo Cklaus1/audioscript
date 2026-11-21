@@ -364,6 +364,10 @@ class AudioProcessor:
 
                             if chunk_results:
                                 llm_analysis = merge_chunk_analyses(chunks, chunk_results)
+                                if len(chunk_results) < len(chunks):
+                                    # Some chunks could not be analysed: the summary covers only part.
+                                    llm_analysis["partial"] = True
+                                    llm_analysis["chunks_failed"] = len(chunks) - len(chunk_results)
                             else:
                                 llm_analysis = None
                         else:

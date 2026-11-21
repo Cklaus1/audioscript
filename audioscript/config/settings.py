@@ -128,9 +128,10 @@ class AudioScriptConfig(BaseModel):
     llm_base_url: str | None = Field(default="http://localhost:11435/v1")  # on-box vLLM
     nim_rate_limit: int = Field(default=40)  # Max requests per minute for NIM API
     # Transcripts longer than this are summarised in chunks and the chunk analyses merged.
-    # 36k characters (~9-10k tokens) leaves room for the prompt and the answer inside the
-    # local model's 16k-token context; 80k overflowed it (owner's recordings, 2026-11).
-    llm_max_chunk_chars: int = Field(default=36_000, ge=4_000)
+    # Each line is rendered as "[mm:ss] SPEAKER_NN: text", which about doubles the tokens.
+    # 12k characters measured <=10.2k prompt tokens, under the ~13.8k left in a 16k-token
+    # local model after the 2k-token answer and the system prompt (16k chars measured 13.0k).
+    llm_max_chunk_chars: int = Field(default=12_000, ge=4_000)
 
     @field_validator("output_format")
     @classmethod
